@@ -41,10 +41,9 @@ cmd /c "`"$vs\Common7\Tools\VsDevCmd.bat`" -arch=amd64 -host_arch=amd64 -no_logo
 
 ## Rules
 - IMPORTANT: tests/reference/ and python/ntn_emu/golden/ are protected from
-  tag golden-v1 onward. Before the tag, create and fix them freely, but never
-  change an expected value just to make a test pass. If a test fails, fix
-  the implementation or stop and tell me; never change an expected value to
-  make it pass.
+  tag golden-v1 onward; before the tag, create and fix them freely. Never
+  change an expected value to make a test pass: if a test fails, fix the
+  implementation or stop and tell me.
 - Tests come from closed-form expectations (FFT tone peak, exact integer
   shifts, ideal-sinc reference), never from the implementation's output.
 - No performance or accuracy claim in README without a measured number in
