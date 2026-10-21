@@ -24,11 +24,21 @@ include(Deps)
 add_executable(hello src/hello.cpp)
 ntn_target_warnings(hello)
 
+# Core engine (orchestration, range track).
+add_library(ntn_core STATIC
+  src/ntn/range_track.cpp
+)
+target_include_directories(ntn_core PUBLIC src)
+ntn_target_warnings(ntn_core)
+
 if(NTN_BUILD_TESTS)
   enable_testing()
   include(GoogleTest)
-  add_executable(ntn_tests tests/cpp/test_smoke.cpp)
+  add_executable(ntn_tests
+    tests/cpp/test_smoke.cpp
+    tests/cpp/test_range_track.cpp
+  )
   ntn_target_warnings(ntn_tests)
-  target_link_libraries(ntn_tests PRIVATE GTest::gtest_main)
+  target_link_libraries(ntn_tests PRIVATE ntn_core GTest::gtest_main)
   gtest_discover_tests(ntn_tests)
 endif()
