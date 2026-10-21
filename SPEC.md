@@ -233,7 +233,10 @@ Acceptance tests (pytest, on the golden model):
 Gate: on all-green, tag `golden-v1`; `golden/` and `tests/reference/` become protected.
 E2E: `scripts/demo_m1a.py`. Pinned TLE + rounded UE → pass → 1 s mid-pass window → OFDM (+ test
 tone) → golden channel → SigMF in `out/` → figure in `docs/figures/` (spectrogram + measured vs
-predicted f_d). Asserts |measured − predicted| < 1 Hz.
+predicted Doppler). The test tone at baseband f_tone is predicted at its RF frequency:
+−(f_c + f_tone)·rho_dot/c, evaluated at the centre of each 0.1 s sub-window, because the delayed
+baseband signal gets Doppler proportional to each component's RF frequency. Asserts
+max |measured − predicted| < 1 Hz over all sub-windows.
 
 ### M1b — C++ scalar engine + pybind11
 Scope: CMake deps, pyproject/scikit-build-core, `RangeTrack`, scalar frac-delay + rotator,
