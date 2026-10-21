@@ -30,6 +30,9 @@ cmd /c "`"$vs\Common7\Tools\VsDevCmd.bat`" -arch=amd64 -host_arch=amd64 -no_logo
 - One source of truth: range track rho(t). tau = rho/c;
   f_d = -f_c * rho_dot / c; carrier phase = -2*pi*f_c*tau(t).
   Never derive Doppler and delay independently.
+- Never use SGP4 velocity for Doppler or knot slopes; derive rho_dot from
+  the position-based range track (SGP4 velocity is inconsistent with its
+  position by ~1 cm/s).
 - Positive Doppler = satellite approaching.
 - Evaluate phase in float64 from segment polynomials; never accumulate
   phase in float32.

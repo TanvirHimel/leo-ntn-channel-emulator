@@ -224,8 +224,9 @@ Acceptance tests (pytest, on the golden model):
    FFT-domain reference exp(−j2πfd) is < −80 dB over |f| < 0.4 fs.
 4. **Quadratic phase**: cubic segment with known coefficients. Instantaneous frequency equals
    −f_c rho_dot(t)/c within 0.01 Hz.
-5. **Segment fit**: Hermite track against dense (10 ms) Skyfield light-time range over a full pass.
-   max |Δrho| < 1 mm, |Δrho_dot| < 1 mm/s, and C1 at all knots.
+5. **Segment fit**: Hermite track against dense (10 ms) Skyfield light-time range.
+   max |Δrho| < 1 mm, |Δrho_dot| < 1 mm/s, and C1 at all knots. Slow: all three pinned passes,
+   full pass (AOS → LOS). Fast (reduced): the highest pass only, ±60 s around TCA.
 6. **Light-time**: rho_lt − rho_geo matches −(v_sat,GCRS · û)·tau to < 1 cm.
 7. **SigMF**: write → read round-trip is bit-identical. `core:datatype == "cf32_le"`.
    `core:frequency` is present in captures and absent from global.

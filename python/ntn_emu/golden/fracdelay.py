@@ -96,7 +96,9 @@ def _chunk(xp, d, n, snap):
     if np.any(k):
         m0k = m0[k]
         fk = f[k]
-        sin_pf = np.sin(np.pi * fk)
+        # sin(pi f) = sin(pi (1 - f)): for f near 1, sin(np.pi * f) would carry an absolute
+        # error ~1e-16 (np.pi != pi), large relative to the tiny result; 1 - f is exact for f >= 0.5.
+        sin_pf = np.sin(np.pi * np.where(fk < 0.5, fk, 1.0 - fk))
         acc = np.zeros(len(fk), dtype=np.complex128)
         for j in range(TAPS):
             off = j - (HALF - 1)  # taps m0-63 .. m0+64

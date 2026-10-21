@@ -28,6 +28,19 @@ This is a portfolio project. See [SPEC.md](SPEC.md) for the full specification.
   effects.
 - **Implementation so far**: Python golden model only. There is no C++ engine yet.
 
+## Known limitations
+- **The SGP4 range track has µm-level steps.** The SGP4 library's Kepler solver stops at a
+  fixed tolerance (1e-12), so the satellite position jumps slightly whenever the solver's
+  iteration count changes. On the pinned passes the largest step in range is about 6 µm. Its
+  effect on carrier phase is < 4e-4 rad, and on Doppler about 1e-4 Hz for a fraction of a
+  second. Skyfield's two-part Julian date adds about 1e-7 m of range noise.
+- **Doppler is not taken from SGP4 velocity.** SGP4's velocity differs from the derivative of
+  its own position by up to ~1 cm/s, so the range rate is derived from the position-based range
+  track instead.
+
+All of these numbers are measured by `scripts/measure_m1a.py`. They will be recorded in
+[docs/results.md](docs/results.md) at the M1a gate.
+
 ## Build
 _Placeholder._ Build steps for the C++ engine and the Python extension will be added in M1b.
 Until then, the Python tests run from the repo root with:

@@ -1,0 +1,44 @@
+{
+  "description": "Pinned passes of the main TLE: scenario epochs (inputs), not expected values.",
+  "generated_by": "scripts/pin_passes.py",
+  "tle_file": "tle/starlink_53934.txt",
+  "tle_name": "STARLINK-4775",
+  "tle_epoch_utc": "2026-10-20T04:06:17.748840Z",
+  "ue_lat_deg": 52.5,
+  "ue_lon_deg": 13.4,
+  "ue_alt_m": 50.0,
+  "search": {
+    "start_utc": "2026-10-17T04:06:17.748840Z",
+    "stop_utc": "2026-10-23T04:06:17.748840Z",
+    "rule": "per band, pass with TCA closest to the TLE epoch"
+  },
+  "passes": [
+    {
+      "label": "low",
+      "mask_deg": 10.0,
+      "max_el_deg": 34.763254,
+      "aos_utc": "2026-10-20T01:09:22.282911Z",
+      "t_max_el_utc": "2026-10-20T01:13:05.750824Z",
+      "tca_utc": "2026-10-20T01:13:05.546313Z",
+      "los_utc": "2026-10-20T01:16:50.083969Z"
+    },
+    {
+      "label": "mid",
+      "mask_deg": 10.0,
+      "max_el_deg": 46.424768,
+      "aos_utc": "2026-10-20T06:06:56.014650Z",
+      "t_max_el_utc": "2026-10-20T06:10:52.075696Z",
+      "tca_utc": "2026-10-20T06:10:52.194184Z",
+      "los_utc": "2026-10-20T06:14:47.283690Z"
+    },
+    {
+      "label": "high",
+      "mask_deg": 10.0,
+      "max_el_deg": 84.544908,
+      "aos_utc": "2026-10-20T04:27:31.609378Z",
+      "t_max_el_utc": "2026-10-20T04:31:38.187075Z",
+      "tca_utc": "2026-10-20T04:31:38.206034Z",
+      "los_utc": "2026-10-20T04:35:44.482198Z"
+    }
+  ]
+}

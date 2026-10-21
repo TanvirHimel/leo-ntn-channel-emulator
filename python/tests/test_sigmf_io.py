@@ -58,6 +58,10 @@ def test_metadata_placement(tmp_path):
     assert cap[0]["core:frequency"] == FC
     assert cap[0]["core:sample_start"] == 0
     assert cap[0]["core:datetime"] == "2026-01-02T03:04:05.678901Z"
+    for ext in g["core:extensions"]:
+        assert isinstance(ext["name"], str)
+        assert isinstance(ext["version"], str)
+        assert isinstance(ext["optional"], bool)
     assert any(e["name"] == "ntn" for e in g["core:extensions"])
     assert g["ntn:tau0_samples"] == 15_360 and g["ntn:tle_name"] == "TEST"
     assert "ntn:git_sha" in g

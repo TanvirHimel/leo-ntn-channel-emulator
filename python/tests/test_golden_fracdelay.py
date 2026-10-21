@@ -6,12 +6,15 @@ Measurement functions return the metric; tests assert on it, and scripts/measure
 import numpy as np
 import pytest
 
-from ntn_emu.golden.fracdelay import fracdelay
+from ntn_emu.golden.fracdelay import SNAP, fracdelay
 
 N = 8192  # period of the test signal
 # Every delay is >= 0.05 samples from an integer, so the snap path is never used; two are > 1 in magnitude.
 DELAYS = [0.1, 0.25, 0.5, 0.73, 0.95, 5.3, -2.4]
+# Near-integer delay, kept out of the spacing rule above (still far outside the 1e-9 snap band).
+NEAR_INT_DELAYS = [0.999]
 NOSNAP_KS = [0, 3, 70_001]
+NOSNAP_EPS = [0.0, 1e-10]  # exact integer, and integer + 1e-10 (all 128 taps nonzero)
 
 
 def bandlimited_spectrum(seed):
@@ -33,12 +36,12 @@ def fracdelay_error_db(d):
     return 10.0 * np.log10(np.sum(np.abs(err) ** 2) / np.sum(np.abs(ref[band]) ** 2))
 
 
-def nosnap_shift_error_db(k):
-    """Integer delay k through the kernel path (snap off) on white noise; error dB rel."""
+def nosnap_shift_error_db(k, eps=0.0):
+    """Delay k + eps through the kernel path (snap off) on white noise; error dB rel. to x shifted by k."""
     rng = np.random.default_rng(5)
     n = 200_000
     x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
-    y = fracdelay(x, float(k), snap=False)
+    y = fracdelay(x, k + eps, snap=False)
     ref = np.zeros_like(x)
     ref[k:] = x[:n - k]
     err_pow = np.sum(np.abs(y - ref) ** 2)
@@ -48,18 +51,20 @@ def nosnap_shift_error_db(k):
 def test_delays_avoid_snap():
     assert all(abs(d - round(d)) >= 0.05 for d in DELAYS)
     assert any(abs(d) > 1 for d in DELAYS)
+    assert all(abs(d - round(d)) > 1e3 * SNAP for d in NEAR_INT_DELAYS)
 
 
-@pytest.mark.parametrize("d", DELAYS)
+@pytest.mark.parametrize("d", DELAYS + NEAR_INT_DELAYS)
 def test_fractional_delay(d):
     """Test 3: error against exp(-j 2 pi f d) < -80 dB over |f| < 0.4 fs."""
     assert fracdelay_error_db(d) < -80.0
 
 
+@pytest.mark.parametrize("eps", NOSNAP_EPS)
 @pytest.mark.parametrize("k", NOSNAP_KS)
-def test_integer_delay_kernel_path(k):
-    """Snap disabled: the kernel itself reproduces an integer shift to < -120 dB."""
-    assert nosnap_shift_error_db(k) < -120.0
+def test_integer_delay_kernel_path(k, eps):
+    """Snap disabled: delay k (+ eps) through the kernel matches the k-shifted input to < -120 dB."""
+    assert nosnap_shift_error_db(k, eps) < -120.0
 
 
 def test_chunk_and_thread_invariance():
