@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(python/ntn_emu/golden/**)",
+      "Edit(tests/reference/**)"
+    ]
+  }
+}
