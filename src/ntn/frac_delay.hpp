@@ -53,9 +53,17 @@ class FracDelayTableT {
     const float* row(int r) const { return &taps_[static_cast<std::size_t>(r) * T]; }
     double beta() const { return beta_; }
 
+    // Layout for the AVX2 kernel (interleaved re/im input): row2(r) is row(r) with every
+    // coefficient duplicated (2T floats), r = 0 .. P; diff2(r) is row(r+1) - row(r) in float32
+    // (the value the scalar kernel forms), duplicated, r = 0 .. P-1.
+    const float* row2(int r) const { return &taps2_[static_cast<std::size_t>(r) * 2 * T]; }
+    const float* diff2(int r) const { return &diff2_[static_cast<std::size_t>(r) * 2 * T]; }
+
  private:
     double beta_;
-    std::vector<float> taps_;  // (P + 1) x T, row-major
+    std::vector<float> taps_;   // (P + 1) x T, row-major
+    std::vector<float> taps2_;  // (P + 1) x 2T
+    std::vector<float> diff2_;  // P x 2T
 };
 
 // Process-wide table per design, built once.
@@ -90,5 +98,12 @@ const FracDelayTable& frac_delay_table();  // same object as frac_delay_table_t<
 
 void frac_delay_scalar(const FracDelayTable& table, const cf32* hist, int64_t hist_first, int64_t n_first,
                        const double* d, cf32* out, std::size_t count);
+
+// AVX2 kernel (frac_delay_avx2.cpp, target ntn_avx2, /arch:AVX2 with FMA3): same contract as
+// frac_delay_scalar, including the read span. Vectorised across the taps; it agrees with the
+// scalar kernel to < -100 dB but not bit for bit (lane-wise summation order, FMA). Integer
+// delays are the same bit-exact gather. The caller must have checked the CPU (cpu_check.hpp).
+void frac_delay_avx2(const FracDelayTable& table, const cf32* hist, int64_t hist_first, int64_t n_first,
+                     const double* d, cf32* out, std::size_t count);
 
 }  // namespace ntn

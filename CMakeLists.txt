@@ -94,6 +94,7 @@ if(NTN_BUILD_TESTS)
     tests/cpp/test_pipeline.cpp
     tests/cpp/test_cpu_check.cpp
     tests/cpp/test_slip_continuity.cpp
+    tests/cpp/test_avx2_kernels.cpp
   )
   ntn_target_warnings(ntn_tests)
   target_link_libraries(ntn_tests PRIVATE ntn_core GTest::gtest_main)

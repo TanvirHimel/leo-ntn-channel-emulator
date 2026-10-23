@@ -24,7 +24,10 @@ double kaiser_beta(int taps) {
 
 template <int T, int P>
 FracDelayTableT<T, P>::FracDelayTableT()
-    : beta_(fd::kaiser_beta(T)), taps_(static_cast<std::size_t>(P + 1) * T, 0.0f) {
+    : beta_(fd::kaiser_beta(T)),
+      taps_(static_cast<std::size_t>(P + 1) * T, 0.0f),
+      taps2_(static_cast<std::size_t>(P + 1) * 2 * T, 0.0f),
+      diff2_(static_cast<std::size_t>(P) * 2 * T, 0.0f) {
     constexpr double pi = std::numbers::pi;
     constexpr int half = T / 2;
     const double i0_beta = std::cyl_bessel_i(0.0, beta_);
@@ -50,6 +53,16 @@ FracDelayTableT<T, P>::FracDelayTableT()
             const double num = (off % 2 == 0) ? sin_pf : -sin_pf;
             row[j] = static_cast<float>(num / (pi * t) * kaiser(t));
         }
+    }
+    // AVX2 layout: duplicated coefficients and float32 row differences (see header).
+    for (int r = 0; r <= P; ++r) {
+        const float* a = row(r);
+        float* a2 = &taps2_[static_cast<std::size_t>(r) * 2 * T];
+        for (int j = 0; j < T; ++j) a2[2 * j] = a2[2 * j + 1] = a[j];
+        if (r == P) break;
+        const float* b = row(r + 1);
+        float* d2 = &diff2_[static_cast<std::size_t>(r) * 2 * T];
+        for (int j = 0; j < T; ++j) d2[2 * j] = d2[2 * j + 1] = b[j] - a[j];
     }
 }
 

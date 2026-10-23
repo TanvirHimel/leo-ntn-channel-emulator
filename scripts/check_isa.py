@@ -37,6 +37,19 @@ OUT = ROOT / "out" / "isa_check_m2.txt"
 AVX2_TARGETS = {"ntn_avx2", "ntn_core", "ntn_isa_probe"}
 NO_AVX2_TARGETS = {"ntn_scalar", "_core"}  # _core: only bindings.cpp is compiled in it
 PROBE_TARGET = "ntn_isa_probe"
+# Implemented AVX2 kernels: their objects must contain ymm code (really vectorised).
+MUST_HAVE_YMM = {"src/ntn/frac_delay_avx2.cpp"}
+# Instruction families beyond AVX2 itself that /arch:AVX2 code may contain (informational;
+# cpu_check must cover every family that appears, see M2 step 5).
+EXT_FAMILIES = {
+    "FMA3": re.compile(r"^vfn?m(add|sub|addsub|subadd)"),
+    "BMI1": re.compile(r"^(andn|bextr|blsi|blsmsk|blsr|tzcnt)$"),
+    "BMI2": re.compile(r"^(bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx)$"),
+    "LZCNT": re.compile(r"^lzcnt$"),
+    "POPCNT": re.compile(r"^popcnt$"),
+    "MOVBE": re.compile(r"^movbe$"),
+    "F16C": re.compile(r"^vcvt(ph2ps|ps2ph)$"),
+}
 
 # VMX instructions start with "v" but are not VEX-encoded.
 VMX = {"vmcall", "vmclear", "vmfunc", "vmlaunch", "vmptrld", "vmptrst", "vmread", "vmresume",
@@ -189,6 +202,8 @@ def main() -> int:
             failures.append(f"zmm (AVX-512) in {src}")
         if not avx2 and c["insns"] == 0:
             failures.append(f"no machine code in {src} ({tgt}); /GL object? cannot inspect")
+        if src in MUST_HAVE_YMM and c["ymm"] == 0:
+            failures.append(f"AVX2 kernel {src} has no ymm instructions (not vectorised?)")
         if tgt == PROBE_TARGET and c["ymm"] == 0:
             failures.append("positive control: probe object has no ymm instructions")
     say("")
@@ -246,6 +261,19 @@ def main() -> int:
             f"(referenced and shared with ntn_scalar/_core: {n_guard_hz})")
     say("")
 
+    # 6 (printed after 5). Extension instruction families in AVX2 objects.
+    ext_lines = []
+    for e in sorted(linked_avx2 + [x for x in entries if x[0] == PROBE_TARGET and x[2] in disasm],
+                    key=lambda t: (t[5], t[0], t[1])):
+        counts = defaultdict(int)
+        for insns in disasm[e[2]].values():
+            for mnem, _ in insns:
+                for fam, rx in EXT_FAMILIES.items():
+                    if rx.match(mnem):
+                        counts[fam] += 1
+        ext_lines.append(f"{e[5]:26s} {e[0]:14s} {Path(e[1]).name + '.obj':34s} "
+                         + (" ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "-"))
+
     # 5. Dynamic initialisers.
     say("== 5. Dynamic initialisers (.CRT$XC*) in AVX2 objects ==")
     for e in linked_avx2:
@@ -253,6 +281,11 @@ def main() -> int:
         say(f"{e[5]:26s} {e[0]:14s} {Path(e[1]).name + '.obj':34s} {k}")
         if k:
             failures.append(f"dynamic initialiser in AVX2 object {e[1]}")
+    say("")
+
+    say("== 6. Instruction families beyond AVX2 in /arch:AVX2 objects (informational) ==")
+    for ln in ext_lines:
+        say(ln)
     say("")
 
     say("INFO list: shared functions whose AVX2 copy has VEX code, not counted as hazards:")
