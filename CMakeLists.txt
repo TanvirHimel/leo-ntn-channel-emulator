@@ -21,8 +21,11 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Warnings)
 include(Deps)
 
-add_executable(hello src/hello.cpp)
-ntn_target_warnings(hello)
+# Toolchain sanity target; not part of the Python wheel build (SKBUILD is set by scikit-build-core).
+if(NOT SKBUILD)
+  add_executable(hello src/hello.cpp)
+  ntn_target_warnings(hello)
+endif()
 
 # Scalar kernels: their own target, never compiled with /arch:AVX2 (SPEC §6), so they stay
 # the test oracle and an honest benchmark baseline.

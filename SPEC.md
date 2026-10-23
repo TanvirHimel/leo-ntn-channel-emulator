@@ -154,6 +154,8 @@ class Pipeline {
 ```
 Block-size invariance is a hard requirement: on the scalar path, block sizes 1, 7 and 4096 give
 bit-identical output. On the AVX2 path they agree to < −120 dB (SIMD tails and FMA can round differently).
+The pipeline has a fixed latency `latency()` = L = max(0, 15 − floor(min D − 1e-6)) samples: output sample i of a
+`process()` call corresponds to channel time n_in + i − L, where n_in = `sample_index()` before the call.
 
 ### 5.2 Python ↔ C++ (pybind11 module `ntn_emu._core`)
 - `RangeTrack(fs, n0: int64[N], n1: int64[N], coeffs: float64[N,4])`. It takes segment
@@ -245,7 +247,7 @@ Acceptance tests:
 1. gtest closed-form: M1a tests 1, 2 and 4 re-run on the C++ scalar path. Phase error < 2e-6 rad
    (float32 output), no drift over 1e6 samples (slow: 1e7). The integer shift is bit-exact (C++ phase-0 impulse path).
 2. `RangeTrack` rejects non-contiguous segments and C1 violations.
-3. **C++ vs golden** on random OFDM with a real-pass segment set: error power < −55 dB rel.
+3. **C++ vs golden** on random OFDM band-limited to |f| < 0.4 fs (the engine's design band; unshaped OFDM leaks ~−38 dB above 0.4 fs, outside it) with a real-pass segment set: error power < −55 dB rel.
 4. **Block invariance** (scalar): block sizes 1, 7 and 4096 give bit-identical output.
 5. `import ntn_emu._core` works from a clean venv install (no DLL errors).
 E2E: `scripts/demo_m1b.py`. Same window as M1a through `_core` → SigMF → figure overlaying

@@ -44,6 +44,8 @@ shifted by -(f_c + f_tone)·rho_dot/c, about 55 Hz more than the carrier Doppler
 - **Doppler is not taken from SGP4 velocity.** SGP4's velocity differs from the derivative of
   its own position by up to 1.08e-02 m/s, so the range rate is derived from the position-based
   range track instead.
+- **Accuracy is specified for |f| < 0.4 fs.** Unshaped OFDM through the engine shows ~−51 dB
+  full-band error near Nyquist (see results.md).
 
 These numbers, and how they were measured, are in [docs/results.md](docs/results.md).
 

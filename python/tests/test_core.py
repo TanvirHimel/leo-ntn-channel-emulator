@@ -158,48 +158,66 @@ def tone_output(rho0, v, count):
     return run(p, np.ones(count, np.complex64))
 
 
-@pytest.mark.parametrize("count", COUNTS)
-@pytest.mark.parametrize("rho0,v", TONE_CASES)
-def test_tone_phase(rho0, v, count):
-    """Phase error < 2e-6 rad against the exact (big-int) reference; no drift to the end."""
+def tone_phase_stats(rho0, v, count):
+    """Test 1: (max phase error, max over the last 1e5 samples, max ||y| - 1|) against the exact
+    (big-int) reference."""
     y = tone_output(rho0, v, count).astype(np.complex128)
     ref = -2.0 * np.pi * exact_cycles_frac(rho0, v, count)
     err = np.abs(np.angle(y * np.exp(-1j * ref)))
-    assert err.max() < 2e-6
-    assert err[-100_000:].max() < 2e-6
-    assert np.max(np.abs(np.abs(y) - 1.0)) < 1e-6
+    return err.max(), err[-100_000:].max(), np.max(np.abs(np.abs(y) - 1.0))
+
+
+def tone_peak_error_hz(rho0, v, count=1_000_000):
+    """Test 1: |interpolated FFT peak - (-fc*v/c)|."""
+    y = tone_output(rho0, v, count).astype(np.complex128)
+    return abs(dtft_peak_hz(y, FS) - (-FC * v / C))
+
+
+@pytest.mark.parametrize("count", COUNTS)
+@pytest.mark.parametrize("rho0,v", TONE_CASES)
+def test_tone_phase(rho0, v, count):
+    """Phase error < 2e-6 rad; the end of the run meets the same limit (no drift)."""
+    err, err_tail, mag_err = tone_phase_stats(rho0, v, count)
+    assert err < 2e-6
+    assert err_tail < 2e-6
+    assert mag_err < 1e-6
 
 
 @pytest.mark.parametrize("rho0,v", TONE_CASES)
 def test_tone_fft_peak(rho0, v):
     """The output tone sits at f_d = -fc*v/c within 0.1 Hz (interpolated peak)."""
-    y = tone_output(rho0, v, 1_000_000).astype(np.complex128)
-    assert abs(dtft_peak_hz(y, FS) - (-FC * v / C)) < 0.1
+    assert tone_peak_error_hz(rho0, v) < 0.1
 
 
 # ---- M1a test 2: integer shift, bit-exact -----------------------------------------------------
 
-@pytest.mark.parametrize("k", SHIFT_KS)
-def test_integer_shift_bit_exact(k):
-    """fc = 0, tau - tau0 = k/fs: output equals the input shifted by k, bit for bit."""
+def integer_shift_result(k):
+    """Test 2: fc = 0, tau - tau0 = k/fs. Returns (latency L, number of output samples whose bits
+    differ from the input shifted by k, with the first L outputs expected exactly zero)."""
     rng = np.random.default_rng(2)
     n_samp = 200_000
     x = (rng.standard_normal(n_samp) + 1j * rng.standard_normal(n_samp)).astype(np.complex64)
     tau0 = 15_360
     p = pipeline([0], [n_samp], [[(tau0 + k) * C / FS, 0.0, 0.0, 0.0]], fc=0.0, tau0=tau0)
     lat = p.latency()
-    assert lat == max(0, HALF - k)  # D = k: L = 15 - floor(k - 1e-6) = 16 - k
     y = run(p, np.concatenate([x, np.zeros(lat, np.complex64)]), block=65_536)
-    ref = np.zeros(n_samp, np.complex64)
-    ref[k:] = x[:n_samp - k]
-    assert np.array_equal(y[:lat].view(np.uint64), np.zeros(lat, np.uint64))
-    assert np.array_equal(y[lat:].view(np.uint64), ref.view(np.uint64))
+    ref = np.zeros(n_samp + lat, np.complex64)
+    ref[lat + k:] = x[:n_samp - k]
+    return lat, int(np.count_nonzero(y.view(np.uint64) != ref.view(np.uint64)))
+
+
+@pytest.mark.parametrize("k", SHIFT_KS)
+def test_integer_shift_bit_exact(k):
+    """Output equals the input shifted by k, bit for bit; D = k gives L = 16 - k (>= 0)."""
+    lat, mismatches = integer_shift_result(k)
+    assert lat == max(0, HALF - k)
+    assert mismatches == 0
 
 
 # ---- M1a test 4: quadratic phase --------------------------------------------------------------
 
-def test_quadratic_phase():
-    """Instantaneous frequency = -fc*rho_dot(t)/c within 0.01 Hz (window 5 s into the segment)."""
+def quadratic_freq_error_hz():
+    """Test 4: max |instantaneous frequency - (-fc*rho_dot(t)/c)|, window 5 s into the segment."""
     c0, c1, c2, c3 = QUAD_COEFFS
     n_start = 5 * FS
     n_samp = 200_000
@@ -211,4 +229,9 @@ def test_quadratic_phase():
     f_meas = (phi[2 * m:] - phi[:-2 * m]) * FS / (2.0 * np.pi * 2 * m)
     u = (n_start + np.arange(m, n_samp - m)) / FS
     f_true = -FC * (c1 + 2.0 * c2 * u + 3.0 * c3 * u**2) / C
-    assert np.max(np.abs(f_meas - f_true)) < 0.01
+    return np.max(np.abs(f_meas - f_true))
+
+
+def test_quadratic_phase():
+    """Instantaneous frequency = -fc*rho_dot(t)/c within 0.01 Hz."""
+    assert quadratic_freq_error_hz() < 0.01
