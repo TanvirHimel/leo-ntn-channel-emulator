@@ -148,11 +148,14 @@ def main() -> int:
 
     lines: list[str] = []
     failures: list[str] = []
+    info: list[str] = []  # unreferenced (or test-only) shared functions with VEX code
     say = lines.append
-    say(f"ISA check, M2 step 1 ({datetime.now().astimezone():%Y-%m-%d %H:%M %Z})")
+    say(f"ISA check, M2 ({datetime.now().astimezone():%Y-%m-%d %H:%M %Z})")
     say(f"git: {run(['git', '-C', str(ROOT), 'rev-parse', '--short', 'HEAD']).strip()}"
         f"{' + uncommitted changes' if run(['git', '-C', str(ROOT), 'status', '--porcelain']).strip() else ''}")
     say(f"compile databases: {', '.join(str(d.relative_to(ROOT)) for d in dbs if d.exists())}")
+    say("scope: inspects the object files (.obj) of our sources, NOT the final linked _core.pyd or")
+    say("       ntn_tests.exe; the link step is covered by check 4 (functions shared across the boundary).")
     say("")
 
     # 1. Flags.
@@ -235,6 +238,9 @@ def main() -> int:
                 f"{'referenced' if referenced else 'referenced by no object in this link unit (dead copy)'}")
             if critical:
                 failures.append(f"COMDAT hazard [{bdir}]: {sym}")
+            else:
+                info.append(f"[{bdir}] {sym} (VEX copy in {', '.join(sorted(where[sym]))}; "
+                            f"{'referenced, test/hello only' if referenced else 'unreferenced'})")
         say(f"[{bdir}] shared functions: {len(shared)} (with ntn_scalar/_core: {len(guarded)}); "
             f"with VEX code in the AVX2 copy: {sum(1 for v in shared.values() if v)} "
             f"(referenced and shared with ntn_scalar/_core: {n_guard_hz})")
@@ -249,6 +255,12 @@ def main() -> int:
             failures.append(f"dynamic initialiser in AVX2 object {e[1]}")
     say("")
 
+    say("INFO list: shared functions whose AVX2 copy has VEX code, not counted as hazards:")
+    for i in info:
+        say("  - " + i)
+    if not info:
+        say("  (none)")
+    say("")
     say("RESULT: " + ("PASS" if not failures else "FAIL"))
     for f in failures:
         say("  - " + f)

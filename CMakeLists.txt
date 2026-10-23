@@ -93,6 +93,7 @@ if(NTN_BUILD_TESTS)
     tests/cpp/test_geometric_channel.cpp
     tests/cpp/test_pipeline.cpp
     tests/cpp/test_cpu_check.cpp
+    tests/cpp/test_slip_continuity.cpp
   )
   ntn_target_warnings(ntn_tests)
   target_link_libraries(ntn_tests PRIVATE ntn_core GTest::gtest_main)
