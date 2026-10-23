@@ -6,11 +6,14 @@
 //
 // Streaming with fixed latency L: process() maps input samples n_in .. n_in+M-1 to
 //     out[i] = y(n_in + i - L),
-// L = max(0, kHalf - 1 - floor(min D - 1e-6)) (0 with delay off), so every input a channel
-// output needs has arrived: output n reads at most x[n + kHalf - 1 - floor(D(n))]
-// (see frac_delay.hpp); the 1e-6-sample guard absorbs float64 rounding of the bound. Outputs at channel times before the track start are zero; channel times at or
-// past the track end throw. Input before the reset index is zero. Each output depends only on
-// its channel time and the input, so any block partition gives identical output.
+//     L = max(0, 15 - floor(min D - 1e-6))   (0 with delay off; 15 = kHalf - 1)
+// Derivation: the kernel reads x[n + 15 - floor(D)] at most (taps x[m0-15 .. m0+16],
+// m0 = n - floor(D) - 1; an integer D reads only x[n - D]), and output n is emitted when input
+// n + L arrives, so L >= 15 - floor(D(n)) for every n. The 1e-6-sample guard absorbs float64
+// rounding of the bound. The bound is tight for non-integer min D (test GeoLatency.*Minimal*).
+// Outputs at channel times before the track start are zero; channel times at or past the track
+// end throw. Input before the reset index is zero. Each output depends only on its channel time
+// and the input, so any block partition gives identical output.
 
 #include <cstdint>
 #include <span>

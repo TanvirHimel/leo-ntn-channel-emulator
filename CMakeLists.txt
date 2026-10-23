@@ -29,6 +29,7 @@ ntn_target_warnings(hello)
 add_library(ntn_scalar STATIC
   src/ntn/frac_delay.cpp
   src/ntn/rotator.cpp
+  src/ntn/cpu_check.cpp
 )
 target_include_directories(ntn_scalar PUBLIC src)
 ntn_target_warnings(ntn_scalar)
@@ -37,6 +38,7 @@ ntn_target_warnings(ntn_scalar)
 add_library(ntn_core STATIC
   src/ntn/range_track.cpp
   src/ntn/geometric_channel.cpp
+  src/ntn/pipeline.cpp
 )
 target_include_directories(ntn_core PUBLIC src)
 target_link_libraries(ntn_core PUBLIC ntn_scalar)
@@ -51,6 +53,8 @@ if(NTN_BUILD_TESTS)
     tests/cpp/test_frac_delay.cpp
     tests/cpp/test_rotator.cpp
     tests/cpp/test_geometric_channel.cpp
+    tests/cpp/test_pipeline.cpp
+    tests/cpp/test_cpu_check.cpp
   )
   ntn_target_warnings(ntn_tests)
   target_link_libraries(ntn_tests PRIVATE ntn_core GTest::gtest_main)

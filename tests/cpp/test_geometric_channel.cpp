@@ -273,6 +273,65 @@ TEST(GeoLatency, DelayOffNeedsNone) {
     EXPECT_EQ(ch.latency(), 0);
 }
 
+// L is minimal (non-integer min D). Output for channel time n is emitted at output index n + L,
+// in the same process() position as input sample n + L. The read-window arithmetic says that
+// output reads x up to n + 15 - floor(D(n)), which equals n + L where D is minimal. An input
+// impulse at m* = n + L must therefore change that output (the kernel really reads the newest
+// sample, so with L - 1 the output would be emitted before in[m*] arrives), while an impulse
+// at m* + 1 must leave it exactly zero (L is sufficient). fc = 0 isolates the delay.
+namespace {
+
+std::vector<cf32> impulse_response(const RangeTrack& track, int64_t tau0, std::size_t len, std::size_t at,
+                                   std::size_t block) {
+    GeometricChannel ch(track, geo(0.0, tau0, true, true));
+    std::vector<cf32> in(len, cf32(0.0f, 0.0f));
+    in[at] = cf32(1.0f, 0.0f);
+    return run(ch, in, block);
+}
+
+}  // namespace
+
+TEST(GeoLatency, MinimalForConstantFractionalDelay) {
+    // D = 2.3 everywhere: L = 15 - floor(2.3) = 13; every output reads up to x[n + 13].
+    constexpr int64_t kTau0 = 26'244;
+    constexpr int64_t kN = 10'000;
+    const RangeTrack track(kFs, {{0, kN, {(static_cast<double>(kTau0) + 2.3) * kC / kFs, 0.0, 0.0, 0.0}}});
+    const int64_t L = GeometricChannel(track, geo(0.0, kTau0, true, true)).latency();
+    ASSERT_EQ(L, 13);
+
+    const int64_t n = 5'000;
+    const auto m_star = static_cast<std::size_t>(n + 15 - 2);  // read-window top = n + L
+    ASSERT_EQ(static_cast<int64_t>(m_star), n + L);
+    for (std::size_t block : {std::size_t{1}, std::size_t{4096}}) {
+        const auto y_needed = impulse_response(track, kTau0, kN, m_star, block);
+        const auto y_beyond = impulse_response(track, kTau0, kN, m_star + 1, block);
+        std::printf("[ measure  ] D=2.3, L=13, block %zu: |out[n+L]| with impulse at n+L = %.3e, at n+L+1 = %.3e\n",
+                    block, std::abs(y_needed[m_star]), std::abs(y_beyond[m_star]));
+        EXPECT_NE(y_needed[m_star], cf32(0.0f, 0.0f));  // needs in[n + L]: L - 1 would be too small
+        EXPECT_EQ(y_beyond[m_star], cf32(0.0f, 0.0f));  // does not need in[n + L + 1]: L suffices
+    }
+}
+
+TEST(GeoLatency, MinimalForApproachingTrack) {
+    // D(n) = 0.4 + v n / c, v = -7000 m/s, 1e6 samples: minimal at n = N - 1, D = -22.949...,
+    // L = 15 + 23 = 38. Output for channel time N - 1 is the last output (index N - 1 + L) and
+    // must depend on the last input sample in[N - 1 + L].
+    constexpr int64_t kTau0 = 26'244;
+    constexpr int64_t kN = 1'000'000;
+    constexpr double v = -7000.0;
+    const RangeTrack track(kFs, {{0, kN, {(static_cast<double>(kTau0) + 0.4) * kC / kFs, v, 0.0, 0.0}}});
+    const double d_last = 0.4 + v * static_cast<double>(kN - 1) / kC;
+    const int64_t L = GeometricChannel(track, geo(0.0, kTau0, true, true)).latency();
+    ASSERT_EQ(L, 15 - static_cast<int64_t>(std::floor(d_last)));
+    ASSERT_EQ(L, 38);
+
+    const auto last = static_cast<std::size_t>(kN - 1 + L);
+    const auto y = impulse_response(track, kTau0, last + 1, last, 4096);
+    std::printf("[ measure  ] approaching, D(N-1)=%.4f, L=%lld: |last output| with impulse at last input = %.3e\n",
+                d_last, static_cast<long long>(L), std::abs(y[last]));
+    EXPECT_NE(y[last], cf32(0.0f, 0.0f));
+}
+
 // ---- Time-varying delay against its closed form ------------------------------------------------
 //
 // fc = 0, approaching satellite (v = -7000 m/s) over 1e6 samples: D(n) = 0.37 + v n / c falls by
