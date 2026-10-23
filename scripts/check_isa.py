@@ -18,6 +18,8 @@ Checks, each PASS/FAIL:
     referenced by a relocation in the link unit must have a VEX-free AVX2 copy.
  5. No dynamic initialisers (.CRT$XCU) in AVX2 objects, so loading the .pyd runs no AVX2 code
     before the import-time check.
+ 6. Every instruction family beyond AVX/AVX2 in the AVX2 objects (FMA3, BMI1/2, LZCNT, ...) is
+    one that cpu_check tests; the AVX2 kernel objects contain ymm code.
 """
 
 from __future__ import annotations
@@ -38,9 +40,11 @@ AVX2_TARGETS = {"ntn_avx2", "ntn_core", "ntn_isa_probe"}
 NO_AVX2_TARGETS = {"ntn_scalar", "_core"}  # _core: only bindings.cpp is compiled in it
 PROBE_TARGET = "ntn_isa_probe"
 # Implemented AVX2 kernels: their objects must contain ymm code (really vectorised).
-MUST_HAVE_YMM = {"src/ntn/frac_delay_avx2.cpp"}
-# Instruction families beyond AVX2 itself that /arch:AVX2 code may contain (informational;
-# cpu_check must cover every family that appears, see M2 step 5).
+MUST_HAVE_YMM = {"src/ntn/frac_delay_avx2.cpp", "src/ntn/rotator_avx2.cpp"}
+# Instruction families beyond AVX/AVX2 that /arch:AVX2 code may contain. Every family that
+# appears in an AVX2 object must be one cpu_check tests (src/ntn/cpu_check.hpp); the VEX/AVX/AVX2
+# encodings themselves are covered by its AVX2 and OS-AVX-state checks.
+CPU_CHECK_TESTED = {"FMA3", "BMI1", "BMI2"}
 EXT_FAMILIES = {
     "FMA3": re.compile(r"^vfn?m(add|sub|addsub|subadd)"),
     "BMI1": re.compile(r"^(andn|bextr|blsi|blsmsk|blsr|tzcnt)$"),
@@ -49,6 +53,12 @@ EXT_FAMILIES = {
     "POPCNT": re.compile(r"^popcnt$"),
     "MOVBE": re.compile(r"^movbe$"),
     "F16C": re.compile(r"^vcvt(ph2ps|ps2ph)$"),
+    "ADX": re.compile(r"^(adcx|adox)$"),
+    "AES": re.compile(r"^v?aes"),
+    "PCLMUL": re.compile(r"^v?pclmul"),
+    "SHA": re.compile(r"^sha"),
+    "RDRAND/RDSEED": re.compile(r"^rd(rand|seed)$"),
+    "AVX-VNNI": re.compile(r"^vpdp(bus|ws)d"),
 }
 
 # VMX instructions start with "v" but are not VEX-encoded.
@@ -271,8 +281,12 @@ def main() -> int:
                 for fam, rx in EXT_FAMILIES.items():
                     if rx.match(mnem):
                         counts[fam] += 1
+        untested = sorted(f for f in counts if f not in CPU_CHECK_TESTED)
         ext_lines.append(f"{e[5]:26s} {e[0]:14s} {Path(e[1]).name + '.obj':34s} "
-                         + (" ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "-"))
+                         + (" ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "-")
+                         + (f"  FAIL: not tested by cpu_check: {', '.join(untested)}" if untested else ""))
+        if untested and e[0] != PROBE_TARGET:
+            failures.append(f"{e[1]} ({e[5]}): instruction families not tested by cpu_check: {', '.join(untested)}")
 
     # 5. Dynamic initialisers.
     say("== 5. Dynamic initialisers (.CRT$XC*) in AVX2 objects ==")
@@ -283,7 +297,8 @@ def main() -> int:
             failures.append(f"dynamic initialiser in AVX2 object {e[1]}")
     say("")
 
-    say("== 6. Instruction families beyond AVX2 in /arch:AVX2 objects (informational) ==")
+    say("== 6. Instruction families beyond AVX/AVX2 in /arch:AVX2 objects ==")
+    say(f"(cpu_check tests: AVX2, OS AVX state, {', '.join(sorted(CPU_CHECK_TESTED))}; any other family FAILs)")
     for ln in ext_lines:
         say(ln)
     say("")
