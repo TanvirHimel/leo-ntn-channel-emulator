@@ -44,6 +44,23 @@ target_include_directories(ntn_core PUBLIC src)
 target_link_libraries(ntn_core PUBLIC ntn_scalar)
 ntn_target_warnings(ntn_core)
 
+# Python extension ntn_emu._core (pip install -e . turns this on). pybind11 comes from the venv;
+# /MD matches python311.dll and every dependency is linked statically into the .pyd.
+if(NTN_BUILD_PYTHON)
+  find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
+  if(NOT pybind11_DIR)
+    execute_process(
+      COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+      OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  endif()
+  set(PYBIND11_FINDPYTHON ON)
+  find_package(pybind11 CONFIG REQUIRED)
+  pybind11_add_module(_core MODULE src/py/bindings.cpp)
+  target_link_libraries(_core PRIVATE ntn_core)
+  ntn_target_warnings(_core)
+  install(TARGETS _core DESTINATION ntn_emu)
+endif()
+
 if(NTN_BUILD_TESTS)
   enable_testing()
   include(GoogleTest)

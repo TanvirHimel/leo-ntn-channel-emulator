@@ -1,0 +1,28 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ntn-emu"
+version = "0.1.0"
+description = "LEO NTN (S-band, 3GPP Rel-17) channel emulator: C++ engine + Python control plane"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "skyfield"]
+
+[project.optional-dependencies]
+demo = ["matplotlib"]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.25"
+cmake.build-type = "Release"
+# Same toolchain as the C++ build: Ninja inside the VsDevCmd (MSVC x64) environment.
+# Without -G, scikit-build-core on Windows falls back to CMake's Visual Studio generator.
+cmake.args = ["-GNinja"]
+build-dir = "build/py-{wheel_tag}"
+wheel.packages = ["python/ntn_emu"]
+
+[tool.scikit-build.cmake.define]
+NTN_BUILD_PYTHON = "ON"
+NTN_BUILD_TESTS = "OFF"
