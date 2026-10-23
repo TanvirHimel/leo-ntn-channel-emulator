@@ -16,6 +16,7 @@ add_compile_options(/fp:precise)
 
 option(NTN_BUILD_TESTS "Build the GoogleTest suite" ON)
 option(NTN_BUILD_PYTHON "Build the ntn_emu._core pybind11 module" OFF)
+option(NTN_BUILD_BENCH "Build the Google Benchmark suite (Release only)" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Warnings)
@@ -37,14 +38,27 @@ add_library(ntn_scalar STATIC
 target_include_directories(ntn_scalar PUBLIC src)
 ntn_target_warnings(ntn_scalar)
 
-# Core engine (range track, channel orchestration).
+# AVX2 kernels (xsimd): the only kernel target compiled with /arch:AVX2. Selected at runtime via
+# Kernel::Avx2; cpu_check (in ntn_scalar) guards it.
+add_library(ntn_avx2 STATIC
+  src/ntn/frac_delay_avx2.cpp
+  src/ntn/rotator_avx2.cpp
+)
+target_include_directories(ntn_avx2 PUBLIC src)
+target_link_libraries(ntn_avx2 PUBLIC xsimd)
+target_compile_options(ntn_avx2 PRIVATE /arch:AVX2)
+ntn_target_warnings(ntn_avx2)
+
+# Core engine (range track, channel orchestration), /arch:AVX2. The bindings and ntn_scalar are
+# built without it, so the import-time AVX2 check runs before any AVX2 instruction (SPEC §6 note).
 add_library(ntn_core STATIC
   src/ntn/range_track.cpp
   src/ntn/geometric_channel.cpp
   src/ntn/pipeline.cpp
 )
 target_include_directories(ntn_core PUBLIC src)
-target_link_libraries(ntn_core PUBLIC ntn_scalar)
+target_link_libraries(ntn_core PUBLIC ntn_scalar ntn_avx2)
+target_compile_options(ntn_core PRIVATE /arch:AVX2)
 ntn_target_warnings(ntn_core)
 
 # Python extension ntn_emu._core (pip install -e . turns this on). pybind11 comes from the venv;
@@ -57,6 +71,10 @@ if(NTN_BUILD_PYTHON)
       OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
   endif()
   set(PYBIND11_FINDPYTHON ON)
+  # No LTCG (/GL): whole-program codegen would blur the per-object /arch:AVX2 boundary and leave
+  # bindings.obj as IL that scripts/check_isa.py cannot inspect. Defining this stops
+  # pybind11_add_module from adding pybind11::lto.
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
   find_package(pybind11 CONFIG REQUIRED)
   pybind11_add_module(_core MODULE src/py/bindings.cpp)
   target_link_libraries(_core PRIVATE ntn_core)
@@ -83,4 +101,11 @@ if(NTN_BUILD_TESTS)
   gtest_discover_tests(ntn_tests TEST_FILTER "-*Slow*")
   gtest_discover_tests(ntn_tests TEST_FILTER "*Slow*"
     PROPERTIES LABELS slow SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]")
+
+  # ISA probe: never linked. Compiled with the ntn_avx2 flags so scripts/check_isa.py has a
+  # positive control (ymm present) and can inspect FMA contraction under /fp:precise.
+  add_library(ntn_isa_probe OBJECT tests/cpp/isa_probe_avx2.cpp)
+  target_link_libraries(ntn_isa_probe PRIVATE xsimd)
+  target_compile_options(ntn_isa_probe PRIVATE /arch:AVX2)
+  ntn_target_warnings(ntn_isa_probe)
 endif()

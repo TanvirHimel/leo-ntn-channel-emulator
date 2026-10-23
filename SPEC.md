@@ -180,10 +180,17 @@ The pipeline has a fixed latency `latency()` = L = max(0, 15 − floor(min D −
   because Python ≥ 3.8 ignores PATH for DLL search.
 - Our targets use `/W4 /permissive- /utf-8 /EHsc`; `/WX` is a CMake option (`NTN_WARNINGS_AS_ERRORS`),
   default OFF; deps are exempt. `/fp:precise` everywhere, never `/fp:fast`.
-- `/arch:AVX2` on core/pyd targets. Scalar kernels are a separate CMake target compiled
+- `/arch:AVX2` on the core and AVX2-kernel targets (`ntn_core`, `ntn_avx2`). Scalar kernels are a separate CMake target compiled
   **without** `/arch:AVX2`, so scalar-vs-AVX2 benchmarks are honest (the compiler cannot
   auto-vectorize the scalar path with AVX2). They are selected at runtime via `Kernel`.
   `cpu_check` raises a clean error at import or startup if AVX2 is missing.
+- **Departure (M2, user-approved):** the original text put `/arch:AVX2` on the pyd target too.
+  The bindings (`src/py/bindings.cpp`, target `_core`) and `ntn_scalar` (which holds `cpu_check`)
+  are built **without** it, so the import-time AVX2 check runs before any AVX2 instruction; the
+  `.pyd` is also built without LTCG (`/GL`), which would blur the per-object boundary.
+  `scripts/check_isa.py` (output `out/isa_check_m2.txt`) verifies the flags, the absence of
+  VEX/ymm code in non-AVX2 objects, inline functions shared across the boundary, and the absence of
+  dynamic initialisers in AVX2 objects.
 - Use `std::numbers::pi` (no `M_PI`). Define `NOMINMAX` if `<windows.h>` is ever included.
 - `pip install -e .` runs inside the same `cmd /c VsDevCmd.bat … &&` environment, with
   `.\.venv\Scripts\python.exe` (3.11) for ABI match. Parallelism is capped with `CMAKE_BUILD_PARALLEL_LEVEL=2`.
