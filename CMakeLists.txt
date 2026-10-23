@@ -24,11 +24,22 @@ include(Deps)
 add_executable(hello src/hello.cpp)
 ntn_target_warnings(hello)
 
-# Core engine (orchestration, range track).
+# Scalar kernels: their own target, never compiled with /arch:AVX2 (SPEC §6), so they stay
+# the test oracle and an honest benchmark baseline.
+add_library(ntn_scalar STATIC
+  src/ntn/frac_delay.cpp
+  src/ntn/rotator.cpp
+)
+target_include_directories(ntn_scalar PUBLIC src)
+ntn_target_warnings(ntn_scalar)
+
+# Core engine (range track, channel orchestration).
 add_library(ntn_core STATIC
   src/ntn/range_track.cpp
+  src/ntn/geometric_channel.cpp
 )
 target_include_directories(ntn_core PUBLIC src)
+target_link_libraries(ntn_core PUBLIC ntn_scalar)
 ntn_target_warnings(ntn_core)
 
 if(NTN_BUILD_TESTS)
@@ -37,8 +48,15 @@ if(NTN_BUILD_TESTS)
   add_executable(ntn_tests
     tests/cpp/test_smoke.cpp
     tests/cpp/test_range_track.cpp
+    tests/cpp/test_frac_delay.cpp
+    tests/cpp/test_rotator.cpp
+    tests/cpp/test_geometric_channel.cpp
   )
   ntn_target_warnings(ntn_tests)
   target_link_libraries(ntn_tests PRIVATE ntn_core GTest::gtest_main)
-  gtest_discover_tests(ntn_tests)
+  # Fast suite: plain `ctest`. Slow variants (*Slow*) carry label `slow` and skip unless
+  # NTN_SLOW=1 is set in the environment: `set NTN_SLOW=1 && ctest -L slow`.
+  gtest_discover_tests(ntn_tests TEST_FILTER "-*Slow*")
+  gtest_discover_tests(ntn_tests TEST_FILTER "*Slow*"
+    PROPERTIES LABELS slow SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]")
 endif()
