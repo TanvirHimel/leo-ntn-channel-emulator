@@ -18,6 +18,10 @@ option(NTN_BUILD_TESTS "Build the GoogleTest suite" ON)
 option(NTN_BUILD_PYTHON "Build the ntn_emu._core pybind11 module" OFF)
 option(NTN_BUILD_BENCH "Build the Google Benchmark suite (Release only)" OFF)
 
+if(NTN_BUILD_BENCH AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+  message(FATAL_ERROR "NTN_BUILD_BENCH needs CMAKE_BUILD_TYPE=Release (benchmarks run from Release only, SPEC §6)")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Warnings)
 include(Deps)
@@ -80,6 +84,16 @@ if(NTN_BUILD_PYTHON)
   target_link_libraries(_core PRIVATE ntn_core)
   ntn_target_warnings(_core)
   install(TARGETS _core DESTINATION ntn_emu)
+endif()
+
+# Throughput benchmarks (Google Benchmark): scalar vs AVX2 per stage, full chain (geometric stage
+# only in M2). The harness is compiled without /arch:AVX2; the kernels it calls come from
+# ntn_scalar / ntn_avx2 as in the engine. Run via scripts/bench_m2.py.
+if(NTN_BUILD_BENCH)
+  add_executable(ntn_bench bench/bench_m2.cpp)
+  target_link_libraries(ntn_bench PRIVATE ntn_core benchmark::benchmark)
+  target_compile_definitions(ntn_bench PRIVATE NTN_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+  ntn_target_warnings(ntn_bench)
 endif()
 
 if(NTN_BUILD_TESTS)
