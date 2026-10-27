@@ -10,21 +10,24 @@
 #include <cstdint>
 #include <span>
 
+#include "ntn/cpu_check.hpp"
 #include "ntn/geometric_channel.hpp"
 #include "ntn/range_track.hpp"
 #include "ntn/types.hpp"
 
 namespace ntn {
 
-class Pipeline {
+class Pipeline : private RequireAvx2 {
  public:
-    // Kernel::Scalar is the M1b default; SPEC's default becomes Kernel::Avx2 in M2.
-    Pipeline(RangeTrack track, GeoConfig geo, Kernel kernel = Kernel::Scalar);
+    // Kernel::Avx2 is the default (SPEC §5.1). Throws std::runtime_error (RequireAvx2, before
+    // anything else) if the CPU lacks a feature the build needs, for either kernel.
+    Pipeline(RangeTrack track, GeoConfig geo, Kernel kernel = Kernel::Avx2);
 
     void process(std::span<const cf32> in, std::span<cf32> out);
     int64_t sample_index() const;  // global index of the next input sample
     void reset(int64_t n_start);   // empty (zero) history; next input sample has index n_start
     int64_t latency() const;       // samples, see geometric_channel.hpp
+    Kernel kernel() const { return geo_.kernel(); }
 
  private:
     GeometricChannel geo_;

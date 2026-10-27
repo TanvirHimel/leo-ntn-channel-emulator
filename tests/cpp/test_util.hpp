@@ -9,8 +9,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <numbers>
+#include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -27,6 +29,25 @@ inline bool slow_enabled() {
     std::free(v);
     return on;
 }
+
+// Sets an environment variable for the guard's lifetime, then restores (or removes) it.
+class EnvGuard {
+ public:
+    EnvGuard(const char* name, const char* value) : name_(name) {
+        char* v = nullptr;
+        std::size_t len = 0;
+        if (_dupenv_s(&v, &len, name) == 0 && v != nullptr) old_ = std::string(v);
+        std::free(v);
+        _putenv_s(name, value);
+    }
+    ~EnvGuard() { _putenv_s(name_.c_str(), old_ ? old_->c_str() : ""); }
+    EnvGuard(const EnvGuard&) = delete;
+    EnvGuard& operator=(const EnvGuard&) = delete;
+
+ private:
+    std::string name_;
+    std::optional<std::string> old_;
+};
 
 #define NTN_REQUIRE_SLOW()                                                   \
     do {                                                                     \

@@ -1,4 +1,6 @@
-// Pipeline (geo only): block-size invariance on the scalar path, reset() and sample_index().
+// Pipeline (geo only): block-size invariance (scalar: bit-identical; AVX2: < -120 dB, SPEC §5.1),
+// reset() and sample_index(), default kernel and the CPU check. The M1b state tests keep the
+// scalar kernel explicitly.
 #include "ntn/pipeline.hpp"
 
 #include <gtest/gtest.h>
@@ -8,10 +10,16 @@
 #include <cstring>
 #include <random>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <vector>
+
+#include "ntn/cpu_check.hpp"
+#include "test_util.hpp"
 
 using ntn::cf32;
 using ntn::GeoConfig;
+using ntn::Kernel;
 using ntn::Pipeline;
 using ntn::RangeSegment;
 using ntn::RangeTrack;
@@ -73,21 +81,21 @@ TEST(PipelineBlocks, ScalarBlockSizeInvarianceBitIdentical) {
     const double d_first = track.rho(0) * kFs / kC - static_cast<double>(g.tau0_samples);
     const double d_last = track.rho(2 * kSeg - 1) * kFs / kC - static_cast<double>(g.tau0_samples);
     const auto slips = static_cast<int64_t>(std::floor(d_first) - std::floor(d_last));
-    const int64_t L = Pipeline(track, g).latency();
+    const int64_t L = Pipeline(track, g, Kernel::Scalar).latency();
     std::printf("[ measure  ] block invariance track: D %.4f -> %.4f (%lld integer slips), knot at %lld, L = %lld\n",
                 d_first, d_last, static_cast<long long>(slips), static_cast<long long>(kSeg),
                 static_cast<long long>(L));
     ASSERT_GE(slips, 5);
 
     const auto in = random_input(static_cast<std::size_t>(2 * kSeg + L), 99);
-    Pipeline ref_p(track, g);
+    Pipeline ref_p(track, g, Kernel::Scalar);
     const auto ref = run_blocks(ref_p, in, {4096});
     double energy = 0.0;
     for (std::size_t i = static_cast<std::size_t>(L); i < ref.size(); ++i) energy += std::norm(ref[i]);
     ASSERT_GT(energy, 0.0);
 
     for (const auto& pattern : std::vector<std::vector<std::size_t>>{{1}, {7}, {1, 7, 4096, 3, 1000, 13}}) {
-        Pipeline p(track, g);
+        Pipeline p(track, g, Kernel::Scalar);
         const auto y = run_blocks(p, in, pattern);
         EXPECT_TRUE(bit_identical(y, ref)) << "first block size " << pattern[0];
         EXPECT_EQ(p.sample_index(), static_cast<int64_t>(in.size()));
@@ -96,7 +104,7 @@ TEST(PipelineBlocks, ScalarBlockSizeInvarianceBitIdentical) {
 
 TEST(PipelineState, SampleIndexAdvancesByBlockSize) {
     const RangeTrack track = slip_track();
-    Pipeline p(track, slip_geo(track));
+    Pipeline p(track, slip_geo(track), Kernel::Scalar);
     EXPECT_EQ(p.sample_index(), track.n_begin());
     std::vector<cf32> in(7), out(7);
     p.process(in, out);
@@ -112,10 +120,10 @@ TEST(PipelineState, ResetToStartRepeatsOutputExactly) {
     const RangeTrack track = slip_track();
     const GeoConfig g = slip_geo(track);
     const auto in = random_input(50'000, 5);
-    Pipeline fresh(track, g);
+    Pipeline fresh(track, g, Kernel::Scalar);
     const auto ref = run_blocks(fresh, in, {4096});
 
-    Pipeline p(track, g);
+    Pipeline p(track, g, Kernel::Scalar);
     (void)run_blocks(p, random_input(30'000, 6), {777});  // unrelated history
     p.reset(track.n_begin());
     EXPECT_TRUE(bit_identical(run_blocks(p, in, {7}), ref));
@@ -132,11 +140,11 @@ TEST(PipelineState, ResetMidTrackEqualsZeroHistory) {
 
     std::vector<cf32> padded(static_cast<std::size_t>(kStart), cf32(0.0f, 0.0f));
     padded.insert(padded.end(), in.begin(), in.end());
-    Pipeline zero_fed(track, g);
+    Pipeline zero_fed(track, g, Kernel::Scalar);
     const auto ref_full = run_blocks(zero_fed, padded, {4096});
     const std::vector<cf32> ref(ref_full.begin() + kStart, ref_full.end());
 
-    Pipeline p(track, g);
+    Pipeline p(track, g, Kernel::Scalar);
     (void)run_blocks(p, random_input(20'000, 9), {4096});  // unrelated history
     p.reset(kStart);
     EXPECT_EQ(p.sample_index(), kStart);
@@ -149,4 +157,54 @@ TEST(PipelineState, LatencyMatchesGeometricStage) {
     const RangeTrack track = slip_track();
     const GeoConfig g = slip_geo(track);
     EXPECT_EQ(Pipeline(track, g).latency(), ntn::GeometricChannel(track, g).latency());
+}
+
+// ---- M2: AVX2 path ----------------------------------------------------------------------------
+
+TEST(PipelineBlocks, Avx2BlockSizeInvariance) {
+    // SPEC §5.1: on the AVX2 path, block sizes 1, 7 and 4096 agree to < -120 dB (the same track,
+    // input and patterns as the scalar test).
+    const RangeTrack track = slip_track();
+    const GeoConfig g = slip_geo(track);
+    const int64_t L = Pipeline(track, g, Kernel::Avx2).latency();
+    const auto in = random_input(static_cast<std::size_t>(2 * kSeg + L), 99);
+    Pipeline ref_p(track, g, Kernel::Avx2);
+    const auto ref = run_blocks(ref_p, in, {4096});
+    const std::vector<cf32> ref_tail(ref.begin() + L, ref.end());
+    for (const auto& pattern : std::vector<std::vector<std::size_t>>{{1}, {7}, {1, 7, 4096, 3, 1000, 13}}) {
+        Pipeline p(track, g, Kernel::Avx2);
+        const auto y = run_blocks(p, in, pattern);
+        const std::vector<cf32> y_tail(y.begin() + L, y.end());
+        std::size_t differ = 0;
+        for (std::size_t i = 0; i < y.size(); ++i) differ += std::memcmp(&y[i], &ref[i], sizeof(cf32)) != 0;
+        const double e = ntn_test::error_db<cf32, cf32>(y_tail, ref_tail);
+        std::string label;
+        for (std::size_t b : pattern) label += (label.empty() ? "" : ",") + std::to_string(b);
+        std::printf("[ measure  ] AVX2 block invariance, blocks {%s} vs {4096}: %.1f dB, %zu of %zu samples "
+                    "differ in bits (limit -120 dB)\n",
+                    label.c_str(), e, differ, y.size());
+        EXPECT_TRUE(differ == 0 || e < -120.0) << "first block size " << pattern[0];
+        EXPECT_EQ(p.sample_index(), static_cast<int64_t>(in.size()));
+    }
+}
+
+TEST(PipelineDefaults, Avx2IsTheDefaultKernel) {
+    const RangeTrack track = slip_track();
+    EXPECT_EQ(Pipeline(track, slip_geo(track)).kernel(), Kernel::Avx2);
+    EXPECT_EQ(Pipeline(track, slip_geo(track), Kernel::Scalar).kernel(), Kernel::Scalar);
+}
+
+TEST(PipelineDefaults, BothKernelsRequireCpuFeatures) {
+    // ntn_core is compiled with /arch:AVX2 and BMI: construction checks the CPU for either kernel.
+    if (!ntn::cpu_has_avx2()) GTEST_SKIP() << "CPU without the AVX2 feature set";
+    const RangeTrack track = slip_track();
+    const ntn_test::EnvGuard hide("NTN_TEST_HIDE_AVX2", "FMA3");
+    for (const Kernel k : {Kernel::Scalar, Kernel::Avx2}) {
+        try {
+            Pipeline p(track, slip_geo(track), k);
+            ADD_FAILURE() << "constructed without FMA3, kernel " << (k == Kernel::Scalar ? "Scalar" : "Avx2");
+        } catch (const std::runtime_error& e) {
+            EXPECT_NE(std::string(e.what()).find("missing: FMA3"), std::string::npos) << e.what();
+        }
+    }
 }

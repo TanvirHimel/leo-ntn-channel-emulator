@@ -15,6 +15,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include "test_util.hpp"
+
 #ifndef PF_AVX2_INSTRUCTIONS_AVAILABLE
 #define PF_AVX2_INSTRUCTIONS_AVAILABLE 40
 #endif
@@ -44,23 +46,7 @@ TEST(CpuCheck, RequireThrowsIffMissing) {
 
 namespace {
 
-class EnvGuard {
- public:
-    EnvGuard(const char* name, const char* value) : name_(name) {
-        char* v = nullptr;
-        std::size_t len = 0;
-        if (_dupenv_s(&v, &len, name) == 0 && v != nullptr) old_ = std::string(v);
-        std::free(v);
-        _putenv_s(name, value);
-    }
-    ~EnvGuard() { _putenv_s(name_.c_str(), old_ ? old_->c_str() : ""); }
-    EnvGuard(const EnvGuard&) = delete;
-    EnvGuard& operator=(const EnvGuard&) = delete;
-
- private:
-    std::string name_;
-    std::optional<std::string> old_;
-};
+using ntn_test::EnvGuard;
 
 constexpr const char* kSwitch = "NTN_TEST_HIDE_AVX2";
 

@@ -81,7 +81,8 @@ def run_channels():
 
     t1 = time.perf_counter()
     pipe = _core.Pipeline(_core.RangeTrack(FS, n0, n1, coeffs),
-                          _core.GeoConfig(fc_hz=FC, fs_hz=FS, tau0_samples=tau0))
+                          _core.GeoConfig(fc_hz=FC, fs_hz=FS, tau0_samples=tau0),
+                          _core.Kernel.Scalar)  # M1b record: scalar engine (default is Avx2 since M2)
     lat = pipe.latency()
     y_cpp = pipe.process(np.concatenate([x, np.zeros(lat, np.complex64)]))[lat:]
     t_cpp = time.perf_counter() - t1

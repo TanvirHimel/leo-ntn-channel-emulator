@@ -55,6 +55,7 @@ Ninja), Python 3.11 control plane. Conservative scope: when in doubt, it is out.
     ZF equalization, then EVM.
 - **Noise**: AWGN at a given SNR, seeded in C++. No path loss, antennas or link budget.
 - **SIMD**: xsimd with an AVX2 baseline. Scalar kernels are kept as test oracle and bench baseline.
+  There is no runtime fallback: the engine (`ntn_core` included) is built for AVX2 + FMA3 + BMI1 + BMI2 and refuses to import or construct without them, so the scalar kernels are an oracle and benchmark baseline, not a fallback path.
 - **Sources rule**: TR 38.811 tables and OAI equations are transcribed **only from fetched source
   documents** (3GPP archive, OAI GitLab at a fixed commit). Citations go in the file: document,
   version, table/section, URL, commit hash, fetch date. If a source cannot be fetched, the item is

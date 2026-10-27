@@ -50,6 +50,8 @@ shifted by -(f_c + f_tone)·rho_dot/c, about 55 Hz more than the carrier Doppler
 These numbers, and how they were measured, are in [docs/results.md](docs/results.md).
 
 ## Build
+Requires a CPU with AVX2, FMA3, BMI1 and BMI2.
+
 _Placeholder._ Build steps for the C++ engine and the Python extension will be added in M1b.
 Until then, the Python tests run from the repo root with:
 

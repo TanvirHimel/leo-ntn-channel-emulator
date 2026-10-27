@@ -43,4 +43,16 @@ bool cpu_has_avx2();
 // Throws std::runtime_error naming the missing features if cpu_has_avx2() is false.
 void require_avx2();
 
+// Construction guard for engine classes (GeometricChannel, Pipeline): used as their FIRST base
+// class, its constructor (defined in cpu_check.cpp, ntn_scalar, no /arch:AVX2) calls
+// require_avx2() before any member of the derived class is initialised, for either kernel.
+// Limitation: the derived constructor is compiled with /arch:AVX2, so the few instructions it
+// runs before calling this base (prologue, argument moves) may be VEX-encoded. The guaranteed
+// clean error is the import-time check in the bindings (compiled without /arch:AVX2); C++
+// callers that need the same guarantee call require_avx2() themselves before constructing.
+class RequireAvx2 {
+ protected:
+    RequireAvx2();
+};
+
 }  // namespace ntn

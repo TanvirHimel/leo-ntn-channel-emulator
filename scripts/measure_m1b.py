@@ -86,7 +86,8 @@ def unshaped_band_split(seg):
     yg = geometric.apply(x, fs=tv.FS, fc=tv.FC, n0=n0, n1=n1, coeffs=co, tau0_samples=tau0,
                          n_start=n_start)
     p = _core.Pipeline(_core.RangeTrack(tv.FS, n0, n1, co),
-                       _core.GeoConfig(fc_hz=tv.FC, fs_hz=tv.FS, tau0_samples=tau0))
+                       _core.GeoConfig(fc_hz=tv.FC, fs_hz=tv.FS, tau0_samples=tau0),
+                       _core.Kernel.Scalar)  # M1b record: scalar engine (default is Avx2 since M2)
     p.reset(n_start)
     lat = p.latency()
     a = p.process(x).astype(complex)[lat:]

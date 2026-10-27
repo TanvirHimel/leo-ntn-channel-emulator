@@ -19,6 +19,7 @@
 #include <span>
 #include <vector>
 
+#include "ntn/cpu_check.hpp"
 #include "ntn/frac_delay.hpp"
 #include "ntn/range_track.hpp"
 #include "ntn/types.hpp"
@@ -34,15 +35,20 @@ struct GeoConfig {
     double residual_ref_doppler_hz = 0.0;  // M4 residual-CFO mode; must be 0 until then
 };
 
+// Kernel selection: Avx2 (default) uses frac_delay_avx2 / rotate_avx2; Scalar uses the scalar
+// kernels, kept as the test oracle and benchmark baseline (no runtime fallback: both need the
+// CPU features in cpu_check.hpp, because this class is compiled with /arch:AVX2).
 enum class Kernel { Scalar, Avx2 };
 
-class GeometricChannel {
+class GeometricChannel : private RequireAvx2 {
  public:
     // Throws std::invalid_argument on fs mismatch, non-finite fc, nonzero residual Doppler
-    // (M4) or Kernel::Avx2 (M2). Starts at the track's first sample.
-    GeometricChannel(RangeTrack track, GeoConfig cfg, Kernel kernel = Kernel::Scalar);
+    // (M4); std::runtime_error (from RequireAvx2, before anything else) if the CPU lacks a
+    // required feature, for either kernel. Starts at the track's first sample.
+    GeometricChannel(RangeTrack track, GeoConfig cfg, Kernel kernel = Kernel::Avx2);
 
     int64_t latency() const { return latency_; }
+    Kernel kernel() const { return kernel_; }
     int64_t sample_index() const { return n_in_; }  // global index of the next input sample
     const RangeTrack& track() const { return track_; }
     const GeoConfig& config() const { return cfg_; }

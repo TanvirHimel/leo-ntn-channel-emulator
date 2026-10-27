@@ -1,6 +1,7 @@
-// Geometric channel on the C++ scalar path: M1a acceptance tests 1, 2 and 4 re-run against
-// the same closed-form expectations (SPEC §8 M1b test 1), plus latency and a time-varying
-// delay against its closed form.
+// Geometric channel: M1a acceptance tests 1, 2 and 4 re-run against the same closed-form
+// expectations (SPEC §8 M1b test 1), plus latency and a time-varying delay against its closed
+// form. Since M2 the closed-form suites run on both kernels (value-parameterized, Scalar and
+// Avx2) with unchanged expectations and limits.
 #include "ntn/geometric_channel.hpp"
 
 #include <gtest/gtest.h>
@@ -12,8 +13,10 @@
 #include <numbers>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
+#include "ntn/cpu_check.hpp"
 #include "test_util.hpp"
 
 using ntn::cf32;
@@ -22,8 +25,20 @@ using ntn::GeometricChannel;
 using ntn::RangeSegment;
 using ntn::RangeTrack;
 using ntn_test::cd;
+using ntn::Kernel;
+
+class KernelParam : public ::testing::TestWithParam<Kernel> {};
+class GeoTone : public KernelParam {};
+class GeoShift : public KernelParam {};
+class GeoQuadratic : public KernelParam {};
+class GeoLatency : public KernelParam {};
+class GeoDelay : public KernelParam {};
 
 namespace {
+
+std::string kernel_name(const ::testing::TestParamInfo<Kernel>& info) {
+    return info.param == Kernel::Scalar ? "Scalar" : "Avx2";
+}
 
 constexpr double kC = 299'792'458.0;
 constexpr double kFs = 7'680'000.0;
@@ -70,8 +85,8 @@ struct PhaseStats {
     double max_err = 0.0, max_err_tail = 0.0, max_mag_err = 0.0;
 };
 
-PhaseStats tone_phase_stats(const ToneCase& tc, int64_t count, std::vector<cf32>* keep = nullptr) {
-    GeometricChannel ch(RangeTrack(kFs, {{0, count, {tc.rho0, tc.v, 0.0, 0.0}}}), geo(kFc, 0, false, true));
+PhaseStats tone_phase_stats(const ToneCase& tc, int64_t count, Kernel kernel, std::vector<cf32>* keep = nullptr) {
+    GeometricChannel ch(RangeTrack(kFs, {{0, count, {tc.rho0, tc.v, 0.0, 0.0}}}), geo(kFc, 0, false, true), kernel);
     EXPECT_EQ(ch.latency(), 0);
     const double a = kFc * tc.rho0 / kC;
     const double fa = a - std::nearbyint(a);
@@ -130,9 +145,9 @@ double dtft_peak(const std::vector<cf32>& y, double lo, double hi) {
     return 0.5 * (a + b);
 }
 
-void tone_phase_test(int64_t count) {
+void tone_phase_test(int64_t count, Kernel kernel) {
     for (const auto& tc : kToneCases) {
-        const PhaseStats st = tone_phase_stats(tc, count);
+        const PhaseStats st = tone_phase_stats(tc, count, kernel);
         std::printf("[ measure  ] tone rho0=%.9g v=%.6g N=%lld: max phase err %.3e rad, last 1e5 %.3e rad, "
                     "max ||y|-1| %.2e\n",
                     tc.rho0, tc.v, static_cast<long long>(count), st.max_err, st.max_err_tail, st.max_mag_err);
@@ -144,14 +159,14 @@ void tone_phase_test(int64_t count) {
 
 }  // namespace
 
-TEST(GeoTone, Phase) { tone_phase_test(1'000'000); }
+TEST_P(GeoTone, Phase) { tone_phase_test(1'000'000, GetParam()); }
 
-TEST(GeoTone, PhaseSlow) {
+TEST_P(GeoTone, PhaseSlow) {
     NTN_REQUIRE_SLOW();
-    tone_phase_test(10'000'000);
+    tone_phase_test(10'000'000, GetParam());
 }
 
-TEST(GeoTone, FftPeakAtDoppler) {
+TEST_P(GeoTone, FftPeakAtDoppler) {
     // M1a test 1, second criterion: the tone sits at f_d = -fc v / c within 0.1 Hz.
     // Peak refined by |DTFT| maximization in +-1 bin (fs/N = 7.68 Hz) around f_d; a peak at the
     // bracket edge would mean the true peak lies outside, so that is rejected too.
@@ -159,7 +174,7 @@ TEST(GeoTone, FftPeakAtDoppler) {
     const double df = kFs / static_cast<double>(kN);
     for (const auto& tc : kToneCases) {
         std::vector<cf32> y;
-        (void)tone_phase_stats(tc, kN, &y);
+        (void)tone_phase_stats(tc, kN, GetParam(), &y);
         const double fd = -kFc * tc.v / kC;
         const double peak = dtft_peak(y, fd - df, fd + df);
         std::printf("[ measure  ] tone v=%.6g: peak %.6f Hz, f_d %.6f Hz, error %.2e Hz\n", tc.v, peak, fd,
@@ -174,14 +189,14 @@ TEST(GeoTone, FftPeakAtDoppler) {
 // fc = 0, tau - tau0 = k/fs (rho = (tau0 + k) c / fs; rho fs / c lands within the 1e-9 snap of
 // the integer). Expected: y(n) = x(n - k), bit-exact, zero for n - k < 0. Output index i maps to
 // channel time i - L; the run feeds L extra samples so every channel time in [0, N) is produced.
-TEST(GeoShift, IntegerShiftBitExact) {
+TEST_P(GeoShift, IntegerShiftBitExact) {
     constexpr int64_t kN = 200'000;
     constexpr int64_t kTau0 = 15'360;  // 2 ms at 7.68 Msps
     std::mt19937_64 rng(2);
     std::normal_distribution<float> g(0.0f, 1.0f);
     for (int64_t k : {int64_t{0}, int64_t{1}, int64_t{37}, int64_t{70'001}}) {
         const double rho = static_cast<double>(kTau0 + k) * kC / kFs;
-        GeometricChannel ch(RangeTrack(kFs, {{0, kN, {rho, 0.0, 0.0, 0.0}}}), geo(0.0, kTau0, true, true));
+        GeometricChannel ch(RangeTrack(kFs, {{0, kN, {rho, 0.0, 0.0, 0.0}}}), geo(0.0, kTau0, true, true), GetParam());
         const int64_t L = ch.latency();
         // D = k (to float64 rounding); with the 1e-6 guard floor gives k - 1, so L = 16 - k, >= 0.
         const int64_t expected_L = std::max<int64_t>(0, ntn::fd::kHalf - k);
@@ -210,13 +225,13 @@ TEST(GeoShift, IntegerShiftBitExact) {
 // the float32 output) equals -fc rho_dot(t) / c within 0.01 Hz. The central-difference bias,
 // fc/c * rho''' * (M/fs)^2 / 6, is ~1e-9 Hz; float32 phase noise (~1e-7 rad) gives
 // ~1e-7 * fs / (2 pi * 200) ~ 6e-4 Hz.
-TEST(GeoQuadratic, InstantaneousFrequency) {
+TEST_P(GeoQuadratic, InstantaneousFrequency) {
     constexpr double c0 = 1'200'000.0, c1 = -5000.0, c2 = 40.0, c3 = -0.5;  // M1a QUAD_COEFFS
     const int64_t n_start = 5 * static_cast<int64_t>(kFs);
     constexpr int64_t kN = 200'000;
     constexpr int64_t kM = 100;
     GeometricChannel ch(RangeTrack(kFs, {{0, 10 * static_cast<int64_t>(kFs), {c0, c1, c2, c3}}}),
-                        geo(kFc, 0, false, true));
+                        geo(kFc, 0, false, true), GetParam());
     ch.reset(n_start);
     EXPECT_EQ(ch.sample_index(), n_start);
     const auto y = run(ch, std::vector<cf32>(kN, cf32(1.0f, 0.0f)));
@@ -245,14 +260,14 @@ TEST(GeoQuadratic, InstantaneousFrequency) {
 // highest index read is n + 15 - floor(D); an integer D reads x[n - D] only. Hence
 //     L = max(0, 15 - floor(min D))
 // (the implementation applies floor to min D - 1e-6 to absorb float64 rounding of the bound).
-TEST(GeoLatency, ApproachingTrack) {
+TEST_P(GeoLatency, ApproachingTrack) {
     // rho = (tau0 + 3) c / fs + v u, v = -7000 m/s, 1 s: D(n) = 3 + v n / c, decreasing.
     // min D at n = N - 1: 3 - 7000 * 7679999 / c = -176.324..., so L = 15 + 177 = 192.
     constexpr int64_t kTau0 = 26'244;
     constexpr int64_t kN = 7'680'000;
     constexpr double v = -7000.0;
     const double rho0 = (static_cast<double>(kTau0) + 3.0) * kC / kFs;
-    GeometricChannel ch(RangeTrack(kFs, {{0, kN, {rho0, v, 0.0, 0.0}}}), geo(kFc, kTau0, true, true));
+    GeometricChannel ch(RangeTrack(kFs, {{0, kN, {rho0, v, 0.0, 0.0}}}), geo(kFc, kTau0, true, true), GetParam());
     const double d_min = 3.0 + v * static_cast<double>(kN - 1) / kC;
     std::printf("[ measure  ] approaching track (v=-7000 m/s, 1 s): min D = %.4f, latency L = %lld\n", d_min,
                 static_cast<long long>(ch.latency()));
@@ -260,16 +275,17 @@ TEST(GeoLatency, ApproachingTrack) {
     EXPECT_EQ(ch.latency(), 192);
 }
 
-TEST(GeoLatency, RecedingTrackNeedsNone) {
+TEST_P(GeoLatency, RecedingTrackNeedsNone) {
     // D(n) = 20 + v n / c with v > 0: min D = 20 >= 16, so L = 0.
     constexpr int64_t kTau0 = 26'244;
     const double rho0 = (static_cast<double>(kTau0) + 20.0) * kC / kFs;
-    GeometricChannel ch(RangeTrack(kFs, {{0, 7'680'000, {rho0, 7000.0, 0.0, 0.0}}}), geo(kFc, kTau0, true, true));
+    GeometricChannel ch(RangeTrack(kFs, {{0, 7'680'000, {rho0, 7000.0, 0.0, 0.0}}}), geo(kFc, kTau0, true, true),
+                        GetParam());
     EXPECT_EQ(ch.latency(), 0);
 }
 
-TEST(GeoLatency, DelayOffNeedsNone) {
-    GeometricChannel ch(RangeTrack(kFs, {{0, 1000, {1e6, -7000.0, 0.0, 0.0}}}), geo(kFc, 0, false, true));
+TEST_P(GeoLatency, DelayOffNeedsNone) {
+    GeometricChannel ch(RangeTrack(kFs, {{0, 1000, {1e6, -7000.0, 0.0, 0.0}}}), geo(kFc, 0, false, true), GetParam());
     EXPECT_EQ(ch.latency(), 0);
 }
 
@@ -282,8 +298,8 @@ TEST(GeoLatency, DelayOffNeedsNone) {
 namespace {
 
 std::vector<cf32> impulse_response(const RangeTrack& track, int64_t tau0, std::size_t len, std::size_t at,
-                                   std::size_t block) {
-    GeometricChannel ch(track, geo(0.0, tau0, true, true));
+                                   std::size_t block, Kernel kernel) {
+    GeometricChannel ch(track, geo(0.0, tau0, true, true), kernel);
     std::vector<cf32> in(len, cf32(0.0f, 0.0f));
     in[at] = cf32(1.0f, 0.0f);
     return run(ch, in, block);
@@ -291,20 +307,20 @@ std::vector<cf32> impulse_response(const RangeTrack& track, int64_t tau0, std::s
 
 }  // namespace
 
-TEST(GeoLatency, MinimalForConstantFractionalDelay) {
+TEST_P(GeoLatency, MinimalForConstantFractionalDelay) {
     // D = 2.3 everywhere: L = 15 - floor(2.3) = 13; every output reads up to x[n + 13].
     constexpr int64_t kTau0 = 26'244;
     constexpr int64_t kN = 10'000;
     const RangeTrack track(kFs, {{0, kN, {(static_cast<double>(kTau0) + 2.3) * kC / kFs, 0.0, 0.0, 0.0}}});
-    const int64_t L = GeometricChannel(track, geo(0.0, kTau0, true, true)).latency();
+    const int64_t L = GeometricChannel(track, geo(0.0, kTau0, true, true), GetParam()).latency();
     ASSERT_EQ(L, 13);
 
     const int64_t n = 5'000;
     const auto m_star = static_cast<std::size_t>(n + 15 - 2);  // read-window top = n + L
     ASSERT_EQ(static_cast<int64_t>(m_star), n + L);
     for (std::size_t block : {std::size_t{1}, std::size_t{4096}}) {
-        const auto y_needed = impulse_response(track, kTau0, kN, m_star, block);
-        const auto y_beyond = impulse_response(track, kTau0, kN, m_star + 1, block);
+        const auto y_needed = impulse_response(track, kTau0, kN, m_star, block, GetParam());
+        const auto y_beyond = impulse_response(track, kTau0, kN, m_star + 1, block, GetParam());
         std::printf("[ measure  ] D=2.3, L=13, block %zu: |out[n+L]| with impulse at n+L = %.3e, at n+L+1 = %.3e\n",
                     block, std::abs(y_needed[m_star]), std::abs(y_beyond[m_star]));
         EXPECT_NE(y_needed[m_star], cf32(0.0f, 0.0f));  // needs in[n + L]: L - 1 would be too small
@@ -312,7 +328,7 @@ TEST(GeoLatency, MinimalForConstantFractionalDelay) {
     }
 }
 
-TEST(GeoLatency, MinimalForApproachingTrack) {
+TEST_P(GeoLatency, MinimalForApproachingTrack) {
     // D(n) = 0.4 + v n / c, v = -7000 m/s, 1e6 samples: minimal at n = N - 1, D = -22.949...,
     // L = 15 + 23 = 38. Output for channel time N - 1 is the last output (index N - 1 + L) and
     // must depend on the last input sample in[N - 1 + L].
@@ -321,12 +337,12 @@ TEST(GeoLatency, MinimalForApproachingTrack) {
     constexpr double v = -7000.0;
     const RangeTrack track(kFs, {{0, kN, {(static_cast<double>(kTau0) + 0.4) * kC / kFs, v, 0.0, 0.0}}});
     const double d_last = 0.4 + v * static_cast<double>(kN - 1) / kC;
-    const int64_t L = GeometricChannel(track, geo(0.0, kTau0, true, true)).latency();
+    const int64_t L = GeometricChannel(track, geo(0.0, kTau0, true, true), GetParam()).latency();
     ASSERT_EQ(L, 15 - static_cast<int64_t>(std::floor(d_last)));
     ASSERT_EQ(L, 38);
 
     const auto last = static_cast<std::size_t>(kN - 1 + L);
-    const auto y = impulse_response(track, kTau0, last + 1, last, 4096);
+    const auto y = impulse_response(track, kTau0, last + 1, last, 4096, GetParam());
     std::printf("[ measure  ] approaching, D(N-1)=%.4f, L=%lld: |last output| with impulse at last input = %.3e\n",
                 d_last, static_cast<long long>(L), std::abs(y[last]));
     EXPECT_NE(y[last], cf32(0.0f, 0.0f));
@@ -338,13 +354,13 @@ TEST(GeoLatency, MinimalForApproachingTrack) {
 // ~23 samples (23 integer slips, negative D for most of the run). Input: 32 complex tones at
 // random frequencies in |f| < 0.4 fs, evaluated exactly, so the reference is x(n - D(n)) in
 // closed form. Limit: -90 dB, the same as the kernel's band-limited test.
-TEST(GeoDelay, TimeVaryingDelayMatchesClosedForm) {
+TEST_P(GeoDelay, TimeVaryingDelayMatchesClosedForm) {
     constexpr int64_t kTau0 = 26'244;
     constexpr int64_t kN = 1'000'000;
     constexpr int kTones = 32;
     constexpr double v = -7000.0;
     const double rho0 = (static_cast<double>(kTau0) + 0.37) * kC / kFs;
-    GeometricChannel ch(RangeTrack(kFs, {{0, kN, {rho0, v, 0.0, 0.0}}}), geo(0.0, kTau0, true, true));
+    GeometricChannel ch(RangeTrack(kFs, {{0, kN, {rho0, v, 0.0, 0.0}}}), geo(0.0, kTau0, true, true), GetParam());
     const int64_t L = ch.latency();
     const double d_min = 0.37 + v * static_cast<double>(kN - 1) / kC;  // -22.979...
     std::printf("[ measure  ] time-varying delay: min D = %.4f, latency L = %lld\n", d_min,
@@ -400,7 +416,25 @@ TEST(GeoValidation, RejectsBadConfig) {
     EXPECT_THROW(GeometricChannel(track, g), std::invalid_argument);
     g = geo(std::nan(""), 0, true, true);
     EXPECT_THROW(GeometricChannel(track, g), std::invalid_argument);
-    EXPECT_THROW(GeometricChannel(track, geo(kFc, 0, true, true), ntn::Kernel::Avx2), std::invalid_argument);
+    // M2: Kernel::Avx2 works and is the default (M1b rejected it with std::invalid_argument).
+    EXPECT_NO_THROW(GeometricChannel(track, geo(kFc, 0, true, true), ntn::Kernel::Avx2));
+    EXPECT_EQ(GeometricChannel(track, geo(kFc, 0, true, true)).kernel(), ntn::Kernel::Avx2);
+}
+
+TEST(GeoValidation, BothKernelsRequireCpuFeatures) {
+    // ntn_core is compiled with /arch:AVX2 (and BMI), so construction checks the CPU for either
+    // kernel. A hidden feature (test-only switch, cpu_check.hpp) must make both throw.
+    if (!ntn::cpu_has_avx2()) GTEST_SKIP() << "CPU without the AVX2 feature set";
+    const RangeTrack track(kFs, {{0, 1000, {1e6, 0.0, 0.0, 0.0}}});
+    const ntn_test::EnvGuard hide("NTN_TEST_HIDE_AVX2", "BMI2");
+    for (const Kernel k : {Kernel::Scalar, Kernel::Avx2}) {
+        try {
+            GeometricChannel ch(track, geo(kFc, 0, true, true), k);
+            ADD_FAILURE() << "constructed without BMI2, kernel " << (k == Kernel::Scalar ? "Scalar" : "Avx2");
+        } catch (const std::runtime_error& e) {
+            EXPECT_NE(std::string(e.what()).find("missing: BMI2"), std::string::npos) << e.what();
+        }
+    }
 }
 
 TEST(GeoValidation, SizeMismatchThrows) {
@@ -418,3 +452,9 @@ TEST(GeoValidation, PastTrackEndThrowsWithoutStateChange) {
     EXPECT_THROW(ch.process(one, o1), std::out_of_range);
     EXPECT_EQ(ch.sample_index(), 1000);
 }
+
+INSTANTIATE_TEST_SUITE_P(Kernels, GeoTone, ::testing::Values(Kernel::Scalar, Kernel::Avx2), kernel_name);
+INSTANTIATE_TEST_SUITE_P(Kernels, GeoShift, ::testing::Values(Kernel::Scalar, Kernel::Avx2), kernel_name);
+INSTANTIATE_TEST_SUITE_P(Kernels, GeoQuadratic, ::testing::Values(Kernel::Scalar, Kernel::Avx2), kernel_name);
+INSTANTIATE_TEST_SUITE_P(Kernels, GeoLatency, ::testing::Values(Kernel::Scalar, Kernel::Avx2), kernel_name);
+INSTANTIATE_TEST_SUITE_P(Kernels, GeoDelay, ::testing::Values(Kernel::Scalar, Kernel::Avx2), kernel_name);

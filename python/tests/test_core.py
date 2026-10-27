@@ -1,8 +1,10 @@
 """ntn_emu._core (pybind11): import, input validation, zero-copy input contract, and M1a
-acceptance tests 1, 2 and 4 re-run through the C++ scalar path (SPEC §8 M1b tests 1 and 5).
+acceptance tests 1, 2 and 4 re-run through the C++ engine (SPEC §8 M1b tests 1 and 5). Since M2
+the closed-form tests run on both kernels (Scalar and Avx2) with unchanged limits.
 
 Expected values are the same closed forms as the golden tests (test_golden_geometric.py),
 with the C++ float32-output limits: phase < 2e-6 rad, integer shift bit-exact.
+The helpers default to Kernel.Scalar (scripts/measure_m1b.py imports them for the M1b record).
 """
 
 import numpy as np
@@ -21,6 +23,8 @@ from test_golden_geometric import (  # closed-form helpers, shared with the gold
     exact_cycles_frac,
 )
 
+KERNELS = [_core.Kernel.Scalar, _core.Kernel.Avx2]
+KERNEL_IDS = ["Scalar", "Avx2"]
 HALF = 16  # frac-delay half length (taps x[m0-15 .. m0+16]); latency L = max(0, 15 - floor(min D))
 
 
@@ -29,9 +33,9 @@ def track(n0, n1, coeffs, fs=FS):
                             np.asarray(coeffs, np.float64).reshape(-1, 4))
 
 
-def pipeline(n0, n1, coeffs, *, fc, tau0=0, delay=True, doppler=True):
+def pipeline(n0, n1, coeffs, *, fc, tau0=0, delay=True, doppler=True, kernel=_core.Kernel.Scalar):
     geo = _core.GeoConfig(fc_hz=fc, fs_hz=FS, tau0_samples=tau0, delay=delay, doppler=doppler)
-    return _core.Pipeline(track(n0, n1, coeffs), geo)
+    return _core.Pipeline(track(n0, n1, coeffs), geo, kernel)
 
 
 def run(p, x, block=1 << 20):
@@ -94,8 +98,14 @@ def test_invalid_config_raises_value_error():
     t = track([0], [1000], [[1e6, 0, 0, 0]])
     with pytest.raises(ValueError):
         _core.Pipeline(t, _core.GeoConfig(fc_hz=FC, fs_hz=FS + 1.0))
-    with pytest.raises(ValueError):
-        _core.Pipeline(t, _core.GeoConfig(fc_hz=FC, fs_hz=FS), _core.Kernel.Avx2)
+
+
+def test_avx2_kernel_works_and_is_default():
+    """M2: Kernel.Avx2 works and is the default (M1b rejected it with ValueError)."""
+    t = track([0], [1000], [[1e6, 0, 0, 0]])
+    p = _core.Pipeline(t, _core.GeoConfig(fc_hz=FC, fs_hz=FS), _core.Kernel.Avx2)
+    assert p.process(np.ones(100, np.complex64)).shape == (100,)
+    assert _core.Pipeline(t, _core.GeoConfig(fc_hz=FC, fs_hz=FS)).kernel == _core.Kernel.Avx2
 
 
 # ---- process(): zero-copy complex64 input contract --------------------------------------------
@@ -152,53 +162,55 @@ def test_state_methods():
 
 # ---- M1a test 1: tone / Doppler phase ---------------------------------------------------------
 
-def tone_output(rho0, v, count):
-    p = pipeline([0], [count], [[rho0, v, 0.0, 0.0]], fc=FC, delay=False)
+def tone_output(rho0, v, count, kernel=_core.Kernel.Scalar):
+    p = pipeline([0], [count], [[rho0, v, 0.0, 0.0]], fc=FC, delay=False, kernel=kernel)
     assert p.latency() == 0
     return run(p, np.ones(count, np.complex64))
 
 
-def tone_phase_stats(rho0, v, count):
+def tone_phase_stats(rho0, v, count, kernel=_core.Kernel.Scalar):
     """Test 1: (max phase error, max over the last 1e5 samples, max ||y| - 1|) against the exact
     (big-int) reference."""
-    y = tone_output(rho0, v, count).astype(np.complex128)
+    y = tone_output(rho0, v, count, kernel).astype(np.complex128)
     ref = -2.0 * np.pi * exact_cycles_frac(rho0, v, count)
     err = np.abs(np.angle(y * np.exp(-1j * ref)))
     return err.max(), err[-100_000:].max(), np.max(np.abs(np.abs(y) - 1.0))
 
 
-def tone_peak_error_hz(rho0, v, count=1_000_000):
+def tone_peak_error_hz(rho0, v, count=1_000_000, kernel=_core.Kernel.Scalar):
     """Test 1: |interpolated FFT peak - (-fc*v/c)|."""
-    y = tone_output(rho0, v, count).astype(np.complex128)
+    y = tone_output(rho0, v, count, kernel).astype(np.complex128)
     return abs(dtft_peak_hz(y, FS) - (-FC * v / C))
 
 
+@pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
 @pytest.mark.parametrize("count", COUNTS)
 @pytest.mark.parametrize("rho0,v", TONE_CASES)
-def test_tone_phase(rho0, v, count):
+def test_tone_phase(rho0, v, count, kernel):
     """Phase error < 2e-6 rad; the end of the run meets the same limit (no drift)."""
-    err, err_tail, mag_err = tone_phase_stats(rho0, v, count)
+    err, err_tail, mag_err = tone_phase_stats(rho0, v, count, kernel)
     assert err < 2e-6
     assert err_tail < 2e-6
     assert mag_err < 1e-6
 
 
+@pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
 @pytest.mark.parametrize("rho0,v", TONE_CASES)
-def test_tone_fft_peak(rho0, v):
+def test_tone_fft_peak(rho0, v, kernel):
     """The output tone sits at f_d = -fc*v/c within 0.1 Hz (interpolated peak)."""
-    assert tone_peak_error_hz(rho0, v) < 0.1
+    assert tone_peak_error_hz(rho0, v, kernel=kernel) < 0.1
 
 
 # ---- M1a test 2: integer shift, bit-exact -----------------------------------------------------
 
-def integer_shift_result(k):
+def integer_shift_result(k, kernel=_core.Kernel.Scalar):
     """Test 2: fc = 0, tau - tau0 = k/fs. Returns (latency L, number of output samples whose bits
     differ from the input shifted by k, with the first L outputs expected exactly zero)."""
     rng = np.random.default_rng(2)
     n_samp = 200_000
     x = (rng.standard_normal(n_samp) + 1j * rng.standard_normal(n_samp)).astype(np.complex64)
     tau0 = 15_360
-    p = pipeline([0], [n_samp], [[(tau0 + k) * C / FS, 0.0, 0.0, 0.0]], fc=0.0, tau0=tau0)
+    p = pipeline([0], [n_samp], [[(tau0 + k) * C / FS, 0.0, 0.0, 0.0]], fc=0.0, tau0=tau0, kernel=kernel)
     lat = p.latency()
     y = run(p, np.concatenate([x, np.zeros(lat, np.complex64)]), block=65_536)
     ref = np.zeros(n_samp + lat, np.complex64)
@@ -206,22 +218,23 @@ def integer_shift_result(k):
     return lat, int(np.count_nonzero(y.view(np.uint64) != ref.view(np.uint64)))
 
 
+@pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
 @pytest.mark.parametrize("k", SHIFT_KS)
-def test_integer_shift_bit_exact(k):
+def test_integer_shift_bit_exact(k, kernel):
     """Output equals the input shifted by k, bit for bit; D = k gives L = 16 - k (>= 0)."""
-    lat, mismatches = integer_shift_result(k)
+    lat, mismatches = integer_shift_result(k, kernel)
     assert lat == max(0, HALF - k)
     assert mismatches == 0
 
 
 # ---- M1a test 4: quadratic phase --------------------------------------------------------------
 
-def quadratic_freq_error_hz():
+def quadratic_freq_error_hz(kernel=_core.Kernel.Scalar):
     """Test 4: max |instantaneous frequency - (-fc*rho_dot(t)/c)|, window 5 s into the segment."""
     c0, c1, c2, c3 = QUAD_COEFFS
     n_start = 5 * FS
     n_samp = 200_000
-    p = pipeline([0], [10 * FS], [QUAD_COEFFS], fc=FC, delay=False)
+    p = pipeline([0], [10 * FS], [QUAD_COEFFS], fc=FC, delay=False, kernel=kernel)
     p.reset(n_start)
     y = p.process(np.ones(n_samp, np.complex64)).astype(np.complex128)
     phi = np.unwrap(np.angle(y))
@@ -232,6 +245,7 @@ def quadratic_freq_error_hz():
     return np.max(np.abs(f_meas - f_true))
 
 
-def test_quadratic_phase():
+@pytest.mark.parametrize("kernel", KERNELS, ids=KERNEL_IDS)
+def test_quadratic_phase(kernel):
     """Instantaneous frequency = -fc*rho_dot(t)/c within 0.01 Hz."""
-    assert quadratic_freq_error_hz() < 0.01
+    assert quadratic_freq_error_hz(kernel) < 0.01

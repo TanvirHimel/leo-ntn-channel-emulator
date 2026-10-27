@@ -5,6 +5,10 @@
 // any other dtype or layout raises TypeError instead of being copied silently), returns a new
 // complex64 array, and runs with the GIL released.
 // C++ exceptions map to Python: std::invalid_argument -> ValueError, std::out_of_range -> IndexError.
+//
+// CPU check (SPEC §6): module init calls ntn::require_avx2() before anything else and raises
+// ImportError naming the missing features. This file is compiled without /arch:AVX2 (target _core,
+// no LTCG), so the check runs before any AVX2 instruction of the engine.
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -14,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "ntn/cpu_check.hpp"
@@ -61,7 +66,13 @@ struct PyPipeline {
 }  // namespace
 
 PYBIND11_MODULE(_core, m) {
-    m.doc() = "NTN channel emulator C++ engine (scalar path, M1b)";
+    try {
+        ntn::require_avx2();  // first: nothing compiled with /arch:AVX2 has run yet
+    } catch (const std::runtime_error& e) {
+        throw py::import_error(e.what());
+    }
+
+    m.doc() = "NTN channel emulator C++ engine (AVX2 kernels by default; scalar kernels as oracle)";
 
     py::class_<RangeTrack>(m, "RangeTrack",
                            "Contiguous, C1 cubic range segments: rho(u) = c0 + c1 u + c2 u^2 + c3 u^3, "
@@ -74,7 +85,7 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("n_begin", &RangeTrack::n_begin)
         .def_property_readonly("n_end", &RangeTrack::n_end);
 
-    py::enum_<Kernel>(m, "Kernel")
+    py::enum_<Kernel>(m, "Kernel", "Avx2 (default) or Scalar (test oracle and benchmark baseline)")
         .value("Scalar", Kernel::Scalar)
         .value("Avx2", Kernel::Avx2);
 
@@ -106,12 +117,13 @@ PYBIND11_MODULE(_core, m) {
         });
 
     py::class_<PyPipeline>(m, "Pipeline",
-                           "Geometric channel pipeline (M1b). out[i] is channel time n_in + i - latency(), "
+                           "Geometric channel pipeline. out[i] is channel time n_in + i - latency(), "
                            "n_in = sample_index() before the call.")
         .def(py::init([](const RangeTrack& t, const GeoConfig& g, Kernel k) {
                  return std::make_unique<PyPipeline>(t, g, k);
              }),
-             py::arg("track"), py::arg("geo"), py::arg("kernel") = Kernel::Scalar)
+             py::arg("track"), py::arg("geo"), py::arg("kernel") = Kernel::Avx2)
+        .def_property_readonly("kernel", [](PyPipeline& self) { return self.p.kernel(); })
         .def(
             "process",
             [](PyPipeline& self, const CF32Array& x) {
@@ -146,5 +158,6 @@ PYBIND11_MODULE(_core, m) {
             },
             py::arg("n_start"));
 
-    m.def("cpu_has_avx2", &ntn::cpu_has_avx2, "True if the CPU and OS support AVX2.");
+    m.def("cpu_has_avx2", &ntn::cpu_has_avx2,
+          "True if the CPU and OS support everything the AVX2 build needs (AVX2, FMA3, BMI1, BMI2, OS AVX state).");
 }

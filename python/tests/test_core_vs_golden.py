@@ -1,4 +1,5 @@
-"""M1b acceptance test 3: C++ scalar engine vs the float64 golden model on a real pass.
+"""M1b acceptance test 3 (C++ scalar engine) and M2 acceptance test 4 (AVX2 engine) vs the
+float64 golden model on a real pass. Both kernels run the same comparison and limit.
 
 Range track: highest pinned Starlink pass, light-time Hermite segments with 1 s knots over 2 s,
 the knot placed at (AOS + TCA)/2. The window is centred on the knot, so it crosses it.
@@ -64,9 +65,24 @@ def knot_segments(sat, ue, p):
     return seg
 
 
-def core_vs_golden(seg, window_s, seed=3, shift=0):
+# Golden output per (segment set, window, seed): the float64 model is the slow part (~10 s for
+# 0.1 s), and both kernels are compared against the same reference.
+_GOLDEN_CACHE = {}
+
+
+def golden_output(seg, x, n_start, tau0, window_s, seed):
+    key = (id(seg), window_s, seed, n_start, tau0)
+    if key not in _GOLDEN_CACHE:
+        n0, n1, coeffs = seg.to_arrays()
+        _GOLDEN_CACHE[key] = (seg, geometric.apply(x, fs=FS, fc=FC, n0=n0, n1=n1, coeffs=coeffs,
+                                                   tau0_samples=tau0, n_start=n_start))
+    return _GOLDEN_CACHE[key][1]
+
+
+def core_vs_golden(seg, window_s, seed=3, shift=0, kernel=_core.Kernel.Scalar):
     """Returns (error dB, latency L, tau0, n_start). `shift` misaligns the comparison by that
-    many samples (negative control only; 0 for the acceptance measurement)."""
+    many samples (negative control only; 0 for the acceptance measurement). The kernel defaults
+    to Scalar (scripts/measure_m1b.py imports this for the M1b record)."""
     n_win = int(round(window_s * FS))
     n_start = FS - n_win // 2  # window centred on the knot
     x = stimulus(window_s, seed)
@@ -74,10 +90,9 @@ def core_vs_golden(seg, window_s, seed=3, shift=0):
     tau0 = int(np.floor(seg.rho(np.array([n_start]))[0] / C * FS))
     n0, n1, coeffs = seg.to_arrays()
 
-    y_gold = geometric.apply(x, fs=FS, fc=FC, n0=n0, n1=n1, coeffs=coeffs, tau0_samples=tau0,
-                             n_start=n_start)
+    y_gold = golden_output(seg, x, n_start, tau0, window_s, seed)
     p = _core.Pipeline(_core.RangeTrack(FS, n0, n1, coeffs),
-                       _core.GeoConfig(fc_hz=FC, fs_hz=FS, tau0_samples=tau0))
+                       _core.GeoConfig(fc_hz=FC, fs_hz=FS, tau0_samples=tau0), kernel)
     p.reset(n_start)
     lat = p.latency()
     y_cpp = p.process(x).astype(np.complex128)
@@ -93,9 +108,11 @@ def seg(starlink, ue, pinned_passes):
     return knot_segments(starlink.sat, ue, pinned_passes[PASS_LABEL])
 
 
+@pytest.mark.parametrize("kernel", [_core.Kernel.Scalar, _core.Kernel.Avx2], ids=["Scalar", "Avx2"])
 @pytest.mark.parametrize("window_s", WINDOWS)
-def test_core_vs_golden_error_power(seg, window_s):
-    err_db, lat, _, n_start = core_vs_golden(seg, window_s)
+def test_core_vs_golden_error_power(seg, window_s, kernel):
+    err_db, lat, _, n_start = core_vs_golden(seg, window_s, kernel=kernel)
+    print(f"[ measure ] core vs golden, {kernel.name}, {window_s} s: {err_db:.2f} dB (limit {LIMIT_DB} dB)")
     n_win = int(round(window_s * FS))
     assert n_start < FS < n_start + n_win - lat  # the compared span crosses the knot
     assert err_db < LIMIT_DB

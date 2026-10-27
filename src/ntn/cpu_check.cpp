@@ -77,4 +77,6 @@ void require_avx2() {
                              "(missing: " + list + "; required: AVX2, FMA3, BMI1, BMI2, OS AVX state (XGETBV))");
 }
 
+RequireAvx2::RequireAvx2() { require_avx2(); }
+
 }  // namespace ntn

@@ -27,8 +27,8 @@ GeometricChannel::GeometricChannel(RangeTrack track, GeoConfig cfg, Kernel kerne
     if (cfg_.residual_ref_doppler_hz != 0.0) {
         throw std::invalid_argument("GeometricChannel: residual-CFO mode is not implemented before M4");
     }
-    if (kernel_ != Kernel::Scalar) {
-        throw std::invalid_argument("GeometricChannel: only Kernel::Scalar exists before M2");
+    if (kernel_ != Kernel::Scalar && kernel_ != Kernel::Avx2) {
+        throw std::invalid_argument("GeometricChannel: unknown Kernel value");
     }
 
     if (cfg_.delay) {
@@ -100,9 +100,19 @@ void GeometricChannel::compute(int64_t n_first, std::span<cf32> out) {
         track_.rho_block(n, rho);  // one rho per sample: delay and phase both derive from it
         if (cfg_.delay) {
             for (std::size_t k = 0; k < m; ++k) d_[k] = rho[k] * cfg_.fs_hz / kC - tau0;
-            frac_delay_scalar(table_, hist_.data(), hist_first_, n, d_.data(), out.data() + i, m);
+            if (kernel_ == Kernel::Avx2) {
+                frac_delay_avx2(table_, hist_.data(), hist_first_, n, d_.data(), out.data() + i, m);
+            } else {
+                frac_delay_scalar(table_, hist_.data(), hist_first_, n, d_.data(), out.data() + i, m);
+            }
         }
-        if (cfg_.doppler) rotate_scalar(rho.data(), cfg_.fc_hz, out.data() + i, m);
+        if (cfg_.doppler) {
+            if (kernel_ == Kernel::Avx2) {
+                rotate_avx2(rho.data(), cfg_.fc_hz, out.data() + i, m);
+            } else {
+                rotate_scalar(rho.data(), cfg_.fc_hz, out.data() + i, m);
+            }
+        }
         i += m;
         n += static_cast<int64_t>(m);
     }

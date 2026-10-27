@@ -100,8 +100,8 @@ if(NTN_BUILD_TESTS)
   target_link_libraries(ntn_tests PRIVATE ntn_core GTest::gtest_main)
   # Fast suite: plain `ctest`. Slow variants (*Slow*) carry label `slow` and skip unless
   # NTN_SLOW=1 is set in the environment: `set NTN_SLOW=1 && ctest -L slow`.
-  gtest_discover_tests(ntn_tests TEST_FILTER "-*Slow*")
-  gtest_discover_tests(ntn_tests TEST_FILTER "*Slow*"
+  gtest_discover_tests(ntn_tests TEST_FILTER "-*Slow*" NO_PRETTY_VALUES)
+  gtest_discover_tests(ntn_tests TEST_FILTER "*Slow*" NO_PRETTY_VALUES
     PROPERTIES LABELS slow SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]")
 
   # ISA probe: never linked. Compiled with the ntn_avx2 flags so scripts/check_isa.py has a
