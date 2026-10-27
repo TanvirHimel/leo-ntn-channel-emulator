@@ -3,9 +3,6 @@
     "deny": [
       "Edit(python/ntn_emu/golden/**)",
       "Edit(tests/reference/**)"
-    ],
-    "allow": [
-      "Bash(.venv/Scripts/python.exe -c ' *)"
     ]
   }
 }
